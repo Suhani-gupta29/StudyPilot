@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "553972389100",
+    "project_id": "studypilot-66118",
+    "storage_bucket": "studypilot-66118.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:553972389100:android:9c4c161d8c49ae0630c1c9",
+        "android_client_info": {
+          "package_name": "com.example.studypilot"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBlbf6cISRM6fgzYQ-VfIMcmS_VbK3mFf4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
