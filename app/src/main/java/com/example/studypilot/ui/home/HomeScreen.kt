@@ -1,9 +1,76 @@
+
 package com.example.studypilot.ui.home
 
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.navigation.NavController
+import com.example.studypilot.ui.mode.StudyMode
+
 
 @Composable
-fun HomeScreen() {
-    Text(text = "Home Screen")
+fun HomeScreen(
+    viewModel: HomeViewModel,
+    onNavigateToSettings: () -> Unit,
+    onNavigateToAnalytics: () -> Unit,
+    onNavigateToPlanner: () -> Unit,
+    onNavigateToCasualSetup: () -> Unit,
+    onNavigateToFocusSetup: () -> Unit,
+      onStartSession: (subject: String, mode: String, minutes: Int) -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    when (uiState.selectedMode) {
+        StudyMode.EXAM -> HomeScreenExam(
+            examDetails = uiState.examDetails,
+            sessions = uiState.studySessions,
+            metrics = uiState.accountabilityMetrics,
+            alerts = uiState.alerts,
+            studyStreak = uiState.studyStreak,
+            isSwapMode = uiState.isSwapMode,
+            swapSourceIndex = uiState.swapSourceIndex,
+            onNavigateToSettings = onNavigateToSettings,
+            onNavigateToAnalytics = onNavigateToAnalytics,
+            onNavigateToPlanner = onNavigateToPlanner,
+            onEnterSwapMode = { viewModel.enterSwapMode() },
+            onCancelSwap = { viewModel.cancelSwap() },
+            onSaveSwap = { viewModel.saveSwap() },
+            onSessionClickedInSwapMode = { viewModel.handleSessionClickInSwapMode(it) },
+            onStartSession = onStartSession
+        )
+        StudyMode.FOCUS -> HomeScreenFocus(
+            focusDetails = uiState.focusDetails,
+            sessions = uiState.focusSessions,
+            metrics = uiState.focusMetrics,
+            alerts = uiState.focusAlerts,
+            isSwapMode = uiState.isFocusSwapMode,
+            swapSourceIndex = uiState.focusSwapSourceIndex,
+            onNavigateToSettings = onNavigateToSettings,
+            onNavigateToAnalytics = onNavigateToAnalytics,
+            onNavigateToPlanner = onNavigateToPlanner,
+            onEnterSwapMode = { viewModel.enterSwapMode() },
+            onCancelSwap = { viewModel.cancelSwap() },
+            onSaveSwap = { viewModel.saveSwap() },
+            onSessionClickedInSwapMode = { viewModel.handleSessionClickInSwapMode(it) },
+            onStartSession = onStartSession,
+            onNavigateToFocusSetup = onNavigateToFocusSetup
+        )
+        StudyMode.CASUAL -> HomeScreenCasual(
+            casualDetails = uiState.casualDetails,
+            sessions = uiState.casualSessions,
+            metrics = uiState.casualMetrics,
+            alerts = uiState.casualAlerts,
+            isSwapMode = uiState.isCasualSwapMode,
+            swapSourceIndex = uiState.casualSwapSourceIndex,
+            onNavigateToSettings = onNavigateToSettings,
+            onNavigateToAnalytics = onNavigateToAnalytics,
+            onNavigateToPlanner = onNavigateToPlanner,
+            onEnterSwapMode = { viewModel.enterSwapMode() },
+            onCancelSwap = { viewModel.cancelSwap() },
+            onSaveSwap = { viewModel.saveSwap() },
+            onSessionClickedInSwapMode = { viewModel.handleSessionClickInSwapMode(it) },
+            onStartSession = onStartSession,
+            onNavigateToCasualSetup = onNavigateToCasualSetup
+        )
+    }
 }

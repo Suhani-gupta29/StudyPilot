@@ -4,10 +4,22 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -19,35 +31,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.studypilot.R
 
 @Composable
-fun SplashScreen(
-    splashViewModel: SplashViewModel = viewModel(),
-    onNavigation: (String) -> Unit
-) {
-    val isUserNew by splashViewModel.isUserNew.collectAsState()
+fun SplashScreen(viewModel: SplashViewModel, onNavigate: (SplashDestination) -> Unit) {
+    val destination by viewModel.destination.collectAsState()
 
-    LaunchedEffect(
-        isUserNew) {
-        isUserNew?.let {
-            if (it) {
-                onNavigation("welcome")
-            } else {
-                onNavigation("home")
-            }
-        }
+    LaunchedEffect(destination) {
+        destination?.let { onNavigate(it) }
     }
 
-
+    // This is your original UI and animation logic
     var startAnimation by remember { mutableStateOf(false) }
     val alphaAnim by animateFloatAsState(
         targetValue = if (startAnimation) 1f else 0f,
         animationSpec = tween(durationMillis = 1200)
     )
-
-
     val scaleAnim by animateFloatAsState(
         targetValue = if (startAnimation) 1f else 0.8f,
         animationSpec = tween(durationMillis = 1200)
@@ -56,7 +55,6 @@ fun SplashScreen(
     LaunchedEffect(Unit) {
         startAnimation = true
     }
-
 
     val backgroundBrush = Brush.verticalGradient(
         colors = listOf(Color(0xFF90CAF9), Color(0xFF1E88E5))
@@ -70,8 +68,6 @@ fun SplashScreen(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-
-
         Image(
             painter = painterResource(id = R.drawable.logo),
             contentDescription = "App Logo",
@@ -81,7 +77,6 @@ fun SplashScreen(
         )
 
         Spacer(modifier = Modifier.height(24.dp))
-
 
         Text(
             text = "StudyPilot",
@@ -94,7 +89,6 @@ fun SplashScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-
         Text(
             text = "Your personalized study planner for academic success.",
             fontSize = 16.sp,
@@ -106,7 +100,6 @@ fun SplashScreen(
         )
 
         Spacer(modifier = Modifier.height(60.dp))
-
 
         CircularProgressIndicator(
             color = Color.White,
