@@ -30,7 +30,8 @@ data class FocusTask(
     val type: TaskType,
     val effort: Effort,
     val dueDate: Long?,
-    val relatedSubject: String?
+    val relatedSubject: String?,
+    val completed: Boolean = false
 )
 
 // Data class for a single study session in the daily plan
@@ -39,5 +40,6 @@ data class StudySession(
     val sessionNumber: Int,
     val subject: String,
     val durationMinutes: Int,
-    var status: SessionStatus = SessionStatus.UPCOMING
+    var status: SessionStatus = SessionStatus.UPCOMING,
+    val isRedistributed: Boolean = false
 )

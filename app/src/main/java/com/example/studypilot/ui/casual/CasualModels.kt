@@ -36,7 +36,9 @@ data class CasualAlert(
 )
 
 data class CasualTask(
+    val id: String = java.util.UUID.randomUUID().toString(),
     val name: String,
     val relatedSubject: String?,
-    val dueDate: Long?
+    val dueDate: Long?,
+    val completed: Boolean = false
 )

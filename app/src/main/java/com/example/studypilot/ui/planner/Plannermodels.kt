@@ -13,8 +13,10 @@ data class PlannerUiState(
     val missedBacklog: Int = 0,
     val weeklyPool: WeeklyPoolInfo? = null,
     val examEndDate: LocalDate? = null,
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
 )
+
+
 
 // ─── One cell on the calendar ─────────────────────────────────────────────────
 data class CalendarDateInfo(
@@ -43,14 +45,16 @@ data class DayDetail(
     val totalStudyMinutes: Int,
     val isFutureDate: Boolean,
     val isToday: Boolean,
-    val redistributedExtra: Int = 0
+    val redistributedExtra: Int = 0,
+    val tasksForDay: List<TaskInfo> = emptyList()
 )
 
 data class PlannedSessionInfo(
     val sessionNumber: Int,
     val subjectName: String,
     val durationMinutes: Int,
-    val wasCompleted: Boolean
+    val wasCompleted: Boolean,
+    val isRedistributed: Boolean = false
 )
 
 data class CompletedSessionInfo(
@@ -66,4 +70,13 @@ data class WeeklyPoolInfo(
     val weekEnd: LocalDate,
     val totalPlanned: Int,
     val totalDone: Int
+)
+
+// ─── Task displayed on a specific date ────────────────────────────────────────
+data class TaskInfo(
+    val taskName: String,
+    val relatedSubject: String?,
+    val dueDate: Long,
+    val taskType: String, // "Focus" or "Casual"
+    val completed: Boolean = false
 )

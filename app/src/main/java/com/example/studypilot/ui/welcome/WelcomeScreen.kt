@@ -1,6 +1,7 @@
 package com.example.studypilot.ui.welcome
 
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -93,6 +94,7 @@ fun WelcomeScreen(
                         .weight(1f)
                         .height(50.dp),
                     shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, Color.White),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                 ) {
                     Text(text = "Sign In", fontSize = 16.sp)

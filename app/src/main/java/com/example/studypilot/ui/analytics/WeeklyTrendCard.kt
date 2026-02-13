@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.studypilot.ui.theme.Roboto
 import kotlin.math.abs
 
 @Composable
@@ -37,7 +38,8 @@ fun WeeklyTrendCard(
         Column(modifier = Modifier.padding(20.dp)) {
             Text(
                 text = "Weekly Trend",
-                style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                fontSize = 16.sp,
+                fontFamily = Roboto,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1E293B)
             )

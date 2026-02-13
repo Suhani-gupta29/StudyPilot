@@ -1,14 +1,16 @@
-
 package com.example.studypilot
 
-import android.R.attr.type
-import android.app.Application
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -18,7 +20,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.example.studypilot.data.StudyPilotDatabase
+import com.example.studypilot.data.SessionRepository
 import com.example.studypilot.data.UserPreferencesRepository
 import com.example.studypilot.ui.auth.AuthState
 import com.example.studypilot.ui.auth.AuthViewModel
@@ -46,24 +48,32 @@ import com.example.studypilot.ui.splash.SplashViewModelFactory
 import com.example.studypilot.ui.theme.StudyPilotTheme
 import com.example.studypilot.ui.welcome.WelcomeScreen
 import com.google.firebase.auth.FirebaseAuth
-import androidx.compose.runtime.rememberCoroutineScope
-import com.example.studypilot.data.SessionRepository
-import kotlinx.coroutines.launch
-import com.example.studypilot.ui.home.HomeScreenFocus
 import com.example.studypilot.ui.analytics.AnalyticsScreen
 import com.example.studypilot.ui.analytics.AnalyticsViewModel
 import com.example.studypilot.ui.analytics.AnalyticsViewModelFactory
 import com.example.studypilot.ui.planner.PlannerScreen
 import com.example.studypilot.ui.planner.PlannerViewModel
 import com.example.studypilot.ui.planner.PlannerViewModelFactory
+import com.example.studypilot.ui.subjects.SubjectsScreen
+import com.example.studypilot.ui.subjects.SubjectsViewModel
+import com.example.studypilot.ui.subjects.SubjectsViewModelFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Set content immediately - don't block here
         setContent {
             StudyPilotTheme {
-                StudyPilotApp()
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    StudyPilotApp()
+                }
             }
         }
     }
@@ -72,12 +82,24 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun StudyPilotApp() {
     val navController = rememberNavController()
+    val context = LocalContext.current
+    val application = context.applicationContext as StudyPilotApplication
+
+    // Use lazy initialization - only create when needed
     val authViewModel: AuthViewModel = viewModel()
-    val application = LocalContext.current.applicationContext as Application
-    val database = StudyPilotDatabase.getDatabase(application)
-    val userPreferencesRepository = UserPreferencesRepository(database.userPreferencesDao())
-    val sessionRepository = SessionRepository(database.studySessionDao())
-    val firebaseAuth = FirebaseAuth.getInstance()
+
+    // Get repositories from Application - already initialized lazily
+    val userPreferencesRepository = remember { application.userPreferencesRepository }
+    val sessionRepository = remember { application.sessionRepository }
+
+    // FirebaseAuth instance - lightweight, safe to create
+    val firebaseAuth = remember { FirebaseAuth.getInstance() }
+
+    // 🚨 CRITICAL FIX: Create HomeViewModel ONCE at NavHost level
+    // This ensures it survives navigation and Flow collectors stay alive
+    val homeViewModel: HomeViewModel = viewModel(
+        factory = HomeViewModelFactory(userPreferencesRepository, authViewModel, sessionRepository)
+    )
 
     NavHost(navController = navController, startDestination = "splash") {
         composable("splash") {
@@ -101,6 +123,7 @@ fun StudyPilotApp() {
                 }
             }
         }
+
         // Auth Screens
         composable("welcome") {
             WelcomeScreen(
@@ -108,6 +131,7 @@ fun StudyPilotApp() {
                 onNavigateToSignUp = { navController.navigate("signUp") }
             )
         }
+
         composable("signIn") {
             SignInScreen(
                 authViewModel = authViewModel,
@@ -117,12 +141,15 @@ fun StudyPilotApp() {
                     }
                 },
                 onSignInSuccess = {
-                    navController.navigate("home") {
+                    // Navigate through splash to properly load preferences before showing home
+                    navController.navigate("splash") {
+                        popUpTo("signIn") { inclusive = true }
                         popUpTo("welcome") { inclusive = true }
                     }
                 }
             )
         }
+
         composable("signUp") {
             SignUpScreen(
                 authViewModel = authViewModel,
@@ -138,6 +165,7 @@ fun StudyPilotApp() {
                 }
             )
         }
+
         // Mode Selection
         composable("modeSelection") {
             val authState by authViewModel.authState.collectAsState()
@@ -166,6 +194,7 @@ fun StudyPilotApp() {
                 )
             }
         }
+
         // Setup Screens
         composable("exam") {
             val examViewModel: com.example.studypilot.ui.exam.ExamViewModel = viewModel(
@@ -186,6 +215,7 @@ fun StudyPilotApp() {
                 }
             )
         }
+
         composable("focusSetup") {
             val focusViewModel: com.example.studypilot.ui.focus.FocusModeSetupViewModel = viewModel(
                 factory = FocusModeSetupViewModelFactory(userPreferencesRepository, authViewModel)
@@ -205,6 +235,7 @@ fun StudyPilotApp() {
                 }
             )
         }
+
         composable("casualSetup") {
             val casualViewModel: CasualModeSetupViewModel = viewModel(
                 factory = CasualModeSetupViewModelFactory(userPreferencesRepository, authViewModel)
@@ -224,19 +255,20 @@ fun StudyPilotApp() {
                 }
             )
         }
+
         // Home Screens
         composable("home") {
+            // ✅ REUSE the shared homeViewModel instance - NO new creation
             HomeScreen(
-                viewModel = viewModel(
-                    factory = HomeViewModelFactory(userPreferencesRepository, authViewModel, sessionRepository)
-                ),
+                viewModel = homeViewModel,
                 onNavigateToSettings = { navController.navigate("settings") },
                 onNavigateToAnalytics = { navController.navigate("analytics") },
                 onNavigateToPlanner = { navController.navigate("planner") },
+                onNavigateToSubjects = { navController.navigate("subjects") },
                 onNavigateToFocusSetup = { navController.navigate("focusSetup") },
-                onNavigateToCasualSetup = {  // ADD THIS
+                onNavigateToCasualSetup = {
                     navController.navigate("casualSetup")
-                },// Required by HomeScreen wrapper
+                },
                 onStartSession = { subject: String, mode: String, minutes: Int ->
                     navController.navigate("session/$subject/$mode/$minutes")
                 }
@@ -244,10 +276,13 @@ fun StudyPilotApp() {
         }
 
         composable("homeCasual") {
-            val homeViewModel: HomeViewModel = viewModel(
-                factory = HomeViewModelFactory(userPreferencesRepository, authViewModel, sessionRepository)
-            )
+            // ✅ REUSE the shared homeViewModel instance - NO new creation
             val uiState by homeViewModel.uiState.collectAsState()
+
+            LaunchedEffect(Unit) {
+                android.util.Log.d("HomeScreenCasual", "🏠 Refreshing from database")
+                homeViewModel.refreshFromDatabase()
+            }
 
             val onStartSession = { subject: String, mode: String, minutes: Int ->
                 navController.navigate("session/$subject/$mode/$minutes")
@@ -263,41 +298,44 @@ fun StudyPilotApp() {
                 onNavigateToSettings = { navController.navigate("settings") },
                 onNavigateToAnalytics = { navController.navigate("analytics") },
                 onNavigateToPlanner = { navController.navigate("planner") },
+                onNavigateToSubjects = { navController.navigate("subjects") },
                 onEnterSwapMode = { homeViewModel.enterSwapMode() },
                 onCancelSwap = { homeViewModel.cancelSwap() },
                 onSaveSwap = { homeViewModel.saveSwap() },
                 onSessionClickedInSwapMode = { homeViewModel.handleSessionClickInSwapMode(it) },
                 onStartSession = onStartSession,
-                onNavigateToCasualSetup = {  // ADD THIS
+                onNavigateToCasualSetup = {
                     navController.navigate("casualSetup")
+                },
+                onTaskCompletionToggled = { taskId, isCompleted ->
+                    homeViewModel.toggleTaskCompletion(taskId, isCompleted)
                 }
             )
         }
+
         // Settings
         composable("settings") {
             SettingsScreen(
                 onLogout = {
                     authViewModel.logout(userPreferencesRepository)
                     navController.navigate("welcome") {
-                        popUpTo("home") { inclusive = true }
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
                     }
                 }
             )
         }
-
 
         composable("analytics") {
             val authState by authViewModel.authState.collectAsState()
             val userId = (authState as? AuthState.Authenticated)?.uid
 
             if (userId != null) {
-                val homeViewModel: HomeViewModel = viewModel(
-                    factory = HomeViewModelFactory(userPreferencesRepository, authViewModel, sessionRepository)
-                )
+                // ✅ REUSE the shared homeViewModel instance - NO new creation
                 val uiState by homeViewModel.uiState.collectAsState()
 
                 val analyticsViewModel: AnalyticsViewModel = viewModel(
-                    factory = AnalyticsViewModelFactory(sessionRepository,userPreferencesRepository,userId)
+                    factory = AnalyticsViewModelFactory(sessionRepository, userPreferencesRepository, userId)
                 )
 
                 val modeName = when (uiState.selectedMode) {
@@ -311,8 +349,9 @@ fun StudyPilotApp() {
                     modeName = modeName,
                     viewModel = analyticsViewModel,
                     onNavigateToSettings = { navController.navigate("settings") },
+                    onNavigateToPlanner = { navController.navigate("planner") },
+                    onNavigateToSubjects = { navController.navigate("subjects") },
                     onNavigateToHome = {
-                        // Navigate back to appropriate home screen based on mode
                         val homeRoute = when (uiState.selectedMode) {
                             StudyMode.CASUAL -> "homeCasual"
                             else -> "home"
@@ -330,9 +369,7 @@ fun StudyPilotApp() {
             val userId = (authState as? AuthState.Authenticated)?.uid
 
             if (userId != null) {
-                val homeViewModel: HomeViewModel = viewModel(
-                    factory = HomeViewModelFactory(userPreferencesRepository, authViewModel, sessionRepository)
-                )
+                // ✅ REUSE the shared homeViewModel instance - NO new creation
                 val uiState by homeViewModel.uiState.collectAsState()
 
                 val plannerViewModel: PlannerViewModel = viewModel(
@@ -343,6 +380,48 @@ fun StudyPilotApp() {
                     )
                 )
 
+                val homeRoute = when (uiState.selectedMode) {
+                    StudyMode.CASUAL -> "homeCasual"
+                    else -> "home"
+                }
+
+                PlannerScreen(
+                    viewModel = plannerViewModel,
+                    onNavigateBack = {
+                        navController.navigate(homeRoute) {
+                            popUpTo("planner") { inclusive = true }
+                        }
+                    },
+                    onNavigateToHome = {
+                        navController.navigate(homeRoute) {
+                            popUpTo("planner") { inclusive = true }
+                        }
+                    },
+                    onNavigateToAnalytics = { navController.navigate("analytics") },
+                    onNavigateToSettings = { navController.navigate("settings") },
+                    onNavigateToSubjects = { navController.navigate("subjects") },
+                    onDoItToday = { sessionIndex ->
+                        plannerViewModel.doItToday(sessionIndex, plannerViewModel.uiState.value.selectedDate)
+                    }
+                )
+            }
+        }
+
+        composable("subjects") {
+            val authState by authViewModel.authState.collectAsState()
+            val userId = (authState as? AuthState.Authenticated)?.uid
+
+            if (userId != null) {
+                // ✅ REUSE the shared homeViewModel instance - NO new creation
+                val uiState by homeViewModel.uiState.collectAsState()
+
+                val subjectsViewModel: SubjectsViewModel = viewModel(
+                    factory = SubjectsViewModelFactory(
+                        userPreferencesRepository = userPreferencesRepository,
+                        authViewModel = authViewModel
+                    )
+                )
+
                 val modeName = when (uiState.selectedMode) {
                     StudyMode.EXAM -> "Exam Mode"
                     StudyMode.FOCUS -> "Focus Mode"
@@ -350,21 +429,32 @@ fun StudyPilotApp() {
                     null -> "Your Current Mode"
                 }
 
-                PlannerScreen(
-                    viewModel = plannerViewModel,
-                    onNavigateBack = {
-                        // Navigate back to appropriate home screen based on mode
-                        val homeRoute = when (uiState.selectedMode) {
-                            StudyMode.CASUAL -> "homeCasual"
-                            else -> "home"
-                        }
+                val homeRoute = when (uiState.selectedMode) {
+                    StudyMode.CASUAL -> "homeCasual"
+                    else -> "home"
+                }
+
+                SubjectsScreen(
+                    viewModel = subjectsViewModel,
+                    modeName = modeName,
+                    onNavigateToAddSubject = { mode ->
+                        // TODO: Navigate to add subject screen when implemented
+                    },
+                    onNavigateToViewNotes = { subjectName, mode ->
+                        // TODO: Navigate to notes screen when implemented
+                    },
+                    onNavigateToHome = {
                         navController.navigate(homeRoute) {
-                            popUpTo("planner") { inclusive = true }
+                            popUpTo("subjects") { inclusive = true }
                         }
-                    }
+                    },
+                    onNavigateToPlanner = { navController.navigate("planner") },
+                    onNavigateToAnalytics = { navController.navigate("analytics") },
+                    onNavigateToSettings = { navController.navigate("settings") }
                 )
             }
         }
+
 
 
 
@@ -376,7 +466,6 @@ fun StudyPilotApp() {
                 navArgument("minutes") { type = NavType.IntType }
             )
         ) { backStackEntry ->
-
             val subject = backStackEntry.arguments?.getString("subject") ?: ""
             val mode = backStackEntry.arguments?.getString("mode") ?: ""
             val minutes = backStackEntry.arguments?.getInt("minutes") ?: 0

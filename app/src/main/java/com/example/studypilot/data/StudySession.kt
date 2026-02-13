@@ -1,9 +1,13 @@
 package com.example.studypilot.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "study_sessions")
+@Entity(
+    tableName = "study_sessions",
+    indices = [Index(value = ["userId"]), Index(value = ["timestamp"])]
+)
 data class StudySession(
     @PrimaryKey(autoGenerate = true)
     val id: Int = 0,

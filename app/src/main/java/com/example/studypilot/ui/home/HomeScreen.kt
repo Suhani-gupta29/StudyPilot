@@ -2,6 +2,7 @@
 package com.example.studypilot.ui.home
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.navigation.NavController
@@ -14,11 +15,18 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
     onNavigateToPlanner: () -> Unit,
+    onNavigateToSubjects: () -> Unit,
     onNavigateToCasualSetup: () -> Unit,
     onNavigateToFocusSetup: () -> Unit,
       onStartSession: (subject: String, mode: String, minutes: Int) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(Unit) {
+        android.util.Log.d("HomeScreen", "🏠 Refreshing from database")
+        viewModel.refreshFromDatabase()
+    }
+
 
     when (uiState.selectedMode) {
         StudyMode.EXAM -> HomeScreenExam(
@@ -32,6 +40,7 @@ fun HomeScreen(
             onNavigateToSettings = onNavigateToSettings,
             onNavigateToAnalytics = onNavigateToAnalytics,
             onNavigateToPlanner = onNavigateToPlanner,
+            onNavigateToSubjects = onNavigateToSubjects,
             onEnterSwapMode = { viewModel.enterSwapMode() },
             onCancelSwap = { viewModel.cancelSwap() },
             onSaveSwap = { viewModel.saveSwap() },
@@ -48,12 +57,16 @@ fun HomeScreen(
             onNavigateToSettings = onNavigateToSettings,
             onNavigateToAnalytics = onNavigateToAnalytics,
             onNavigateToPlanner = onNavigateToPlanner,
+            onNavigateToSubjects = onNavigateToSubjects,
             onEnterSwapMode = { viewModel.enterSwapMode() },
             onCancelSwap = { viewModel.cancelSwap() },
             onSaveSwap = { viewModel.saveSwap() },
             onSessionClickedInSwapMode = { viewModel.handleSessionClickInSwapMode(it) },
             onStartSession = onStartSession,
-            onNavigateToFocusSetup = onNavigateToFocusSetup
+            onNavigateToFocusSetup = onNavigateToFocusSetup,
+            onTaskCompletionToggled = { taskId, isCompleted ->
+                viewModel.toggleTaskCompletion(taskId, isCompleted)
+            }
         )
         StudyMode.CASUAL -> HomeScreenCasual(
             casualDetails = uiState.casualDetails,
@@ -65,12 +78,16 @@ fun HomeScreen(
             onNavigateToSettings = onNavigateToSettings,
             onNavigateToAnalytics = onNavigateToAnalytics,
             onNavigateToPlanner = onNavigateToPlanner,
+            onNavigateToSubjects = onNavigateToSubjects,
             onEnterSwapMode = { viewModel.enterSwapMode() },
             onCancelSwap = { viewModel.cancelSwap() },
             onSaveSwap = { viewModel.saveSwap() },
             onSessionClickedInSwapMode = { viewModel.handleSessionClickInSwapMode(it) },
             onStartSession = onStartSession,
-            onNavigateToCasualSetup = onNavigateToCasualSetup
+            onNavigateToCasualSetup = onNavigateToCasualSetup,
+            onTaskCompletionToggled = { taskId, isCompleted ->
+                viewModel.toggleTaskCompletion(taskId, isCompleted)
+            }
         )
     }
 }

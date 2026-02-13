@@ -62,7 +62,15 @@ import com.example.studypilot.ui.casual.CasualTask
 import com.example.studypilot.ui.shared.SessionStatus
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.AssignmentTurnedIn
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.studypilot.HomeViewModelFactory
+import com.example.studypilot.StudyPilotApplication
+import com.example.studypilot.ui.auth.AuthViewModel
 import com.example.studypilot.ui.theme.Roboto
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -81,6 +89,25 @@ private val completedGreen = Color(0xFF2E7D32)
 private val currentBlue = Color(0xFF1E88E5)
 private val upcomingGrey = Color(0xFF90A4AE)
 
+private val gradientTop = Color(0xFFE3F2FD)
+private val gradientBottom = Color(0xFFFFFFFF)
+
+
+private enum class TaskVisualStatus {
+    COMPLETED,
+    OVERDUE,
+    UPCOMING
+}
+
+private fun getTaskStatus(task: CasualTask): TaskVisualStatus {
+    if (task.completed) return TaskVisualStatus.COMPLETED
+
+    val dueDate = task.dueDate ?: return TaskVisualStatus.UPCOMING
+    val today = System.currentTimeMillis()
+
+    return if (dueDate < today) TaskVisualStatus.OVERDUE else TaskVisualStatus.UPCOMING
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreenCasual(
@@ -93,88 +120,143 @@ fun HomeScreenCasual(
     onNavigateToSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
     onNavigateToPlanner: () -> Unit,
+    onNavigateToSubjects: () -> Unit,
     onEnterSwapMode: () -> Unit,
     onCancelSwap: () -> Unit,
     onSaveSwap: () -> Unit,
     onSessionClickedInSwapMode: (Int) -> Unit,
     onStartSession: (String, String, Int) -> Unit,
-    onNavigateToCasualSetup: () -> Unit  // ADD THIS
+    onNavigateToCasualSetup: () -> Unit,
+    onTaskCompletionToggled: (String, Boolean) -> Unit// ADD THIS
 ) {
+
+
+    val context = LocalContext.current
+    val application = context.applicationContext as StudyPilotApplication
+    val authViewModel: AuthViewModel = viewModel()
+    val homeViewModel: HomeViewModel = viewModel(
+        factory = HomeViewModelFactory(
+            application.userPreferencesRepository,
+            authViewModel,
+            application.sessionRepository
+        )
+    )
+
+    LaunchedEffect(Unit) {
+        android.util.Log.d("HomeScreenCasual", "🏠 Refreshing from database")
+        homeViewModel.refreshFromDatabase()
+    }
+
     val activeSession = sessions
         ?.firstOrNull { it.status != CasualSessionStatus.COMPLETED }
 
     Scaffold(
         topBar = { CasualTopAppBar() },
-        bottomBar = { HomeBottomNavigationBar(onNavigateToSettings = onNavigateToSettings, onNavigateToAnalytics = onNavigateToAnalytics, onNavigateToPlanner = onNavigateToPlanner, activeIndex = 0) },
-        containerColor = mainBackground
+        bottomBar = {
+            HomeBottomNavigationBar(
+                onNavigateToSettings = onNavigateToSettings,
+                onNavigateToAnalytics = onNavigateToAnalytics,
+                onNavigateToPlanner = onNavigateToPlanner,
+                onNavigateToSubjects = onNavigateToSubjects,
+                activeIndex = 0
+            )
+        }
     ) { paddingValues ->
-        LazyColumn(
+
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            item { ContextHeader() }
-
-            // CHECK IF SUBJECTS EXIST
-            val hasSubjects = casualDetails?.let {
-                sessions?.isNotEmpty() == true
-            } ?: false
-
-            if (hasSubjects) {
-                item {
-                    TodayCasualHeader(
-                        isSwapMode = isSwapMode,
-                        onCancelSwap = onCancelSwap,
-                        onEnterSwapMode = onEnterSwapMode,
-                        onSaveSwap = onSaveSwap
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(gradientTop, gradientBottom)
                     )
-                }
-                val firstUncompletedIndex =
-                    sessions?.indexOfFirst { it.status != CasualSessionStatus.COMPLETED } ?: -1
+                )
+                .padding(paddingValues)
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
 
-                itemsIndexed(sessions!!, key = { _, session -> session.sessionNumber }) { index, session ->
-                    CasualSessionCard(
-                        session = session,
-                        isSwapMode = isSwapMode,
-                        isSourceNode = swapSourceIndex == index,
-                        isCurrent = index == firstUncompletedIndex,
+                item { ContextHeader() }
+
+                val hasSubjects = casualDetails?.let {
+                    sessions?.isNotEmpty() == true
+                } ?: false
+
+                if (hasSubjects) {
+                    item {
+                        TodayCasualHeader(
+                            isSwapMode = isSwapMode,
+                            onCancelSwap = onCancelSwap,
+                            onEnterSwapMode = onEnterSwapMode,
+                            onSaveSwap = onSaveSwap
+                        )
+                    }
+
+                    val firstUncompletedIndex =
+                        sessions?.indexOfFirst { it.status != CasualSessionStatus.COMPLETED } ?: -1
+
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = cardBackground),
+                            border = BorderStroke(1.dp, cardBorder),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                sessions!!.forEachIndexed { index, session ->
+                                    CasualSessionCard(
+                                        session = session,
+                                        isSwapMode = isSwapMode,
+                                        isSourceNode = swapSourceIndex == index,
+                                        isCurrent = index == firstUncompletedIndex,
+                                        onClick = {
+                                            if (isSwapMode) {
+                                                onSessionClickedInSwapMode(index)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    item {
+                        EmptySessionsCard(onClick = onNavigateToCasualSetup)
+                    }
+                }
+
+                item {
+                    BeginCasualSessionButton(
                         onClick = {
-                            if (isSwapMode) {
-                                onSessionClickedInSwapMode(index)
+                            activeSession?.let {
+                                onStartSession(
+                                    it.subjectName,
+                                    "CASUAL",
+                                    it.duration
+                                )
                             }
                         }
                     )
                 }
-            } else {
-                // EMPTY STATE
+
                 item {
-                    EmptySessionsCard(onClick = onNavigateToCasualSetup)
+                    TasksPanel(
+                        tasks = casualDetails?.tasks ?: emptyList(),
+                        onNavigateToCasualSetup = onNavigateToCasualSetup,
+                        onTaskCompletionToggled = onTaskCompletionToggled
+                    )
                 }
-            }
 
-            item { BeginCasualSessionButton(
-                onClick = {
-                    activeSession?.let {
-                        onStartSession(
-                            it.subjectName,
-                            "CASUAL",
-                            it.duration
-                        )
-                    }
+                if (metrics != null) {
+                    item { ProgressAndStreakPanel(metrics = metrics) }
                 }
-            ) }
-
-            item {
-                TasksPanel(
-                    tasks = casualDetails?.tasks ?: emptyList(),
-                    onNavigateToCasualSetup = onNavigateToCasualSetup
-                )
-            }
-
-            if (metrics != null) {
-                item { ProgressAndStreakPanel(metrics = metrics) }
             }
         }
     }
@@ -341,17 +423,83 @@ private fun BeginCasualSessionButton(onClick: () -> Unit) {
 
 
 @Composable
-private fun TaskRow(task: CasualTask) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun TaskRow(
+    task: CasualTask,
+    onTaskCompletionToggled: (String, Boolean) -> Unit
+) {
+    val status = getTaskStatus(task)
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                when (status) {
+                    TaskVisualStatus.COMPLETED -> Color(0xFFE8F5E9) // Light green
+                    TaskVisualStatus.OVERDUE -> Color(0xFFFFEBEE) // Light red
+                    TaskVisualStatus.UPCOMING -> Color.Transparent
+                },
+                RoundedCornerShape(8.dp)
+            )
+            .padding(vertical = 4.dp)
+    ) {
+        androidx.compose.material3.Checkbox(
+            checked = task.completed,
+            onCheckedChange = { isChecked ->
+                onTaskCompletionToggled(task.id, isChecked)
+            },
+            colors = androidx.compose.material3.CheckboxDefaults.colors(
+                checkedColor = completedGreen,
+                uncheckedColor = if (status == TaskVisualStatus.OVERDUE) Color(0xFFD32F2F) else textSecondary
+            )
+        )
+
+        Spacer(modifier = Modifier.width(8.dp))
+
         Column(modifier = Modifier.weight(1f)) {
-            Text(task.name, fontSize = 14.sp, color = textPrimary, fontWeight = FontWeight.Medium, fontFamily = Roboto)
-            task.relatedSubject?.let {
-                Text(it, fontSize = 12.sp, color = textSecondary, fontFamily = Roboto)
+            Text(
+                text = task.name,
+                fontSize = 14.sp,
+                color = when (status) {
+                    TaskVisualStatus.COMPLETED -> textSecondary
+                    TaskVisualStatus.OVERDUE -> Color(0xFFD32F2F)
+                    TaskVisualStatus.UPCOMING -> textPrimary
+                },
+                fontWeight = FontWeight.Medium,
+                fontFamily = Roboto,
+                textDecoration = if (task.completed) androidx.compose.ui.text.style.TextDecoration.LineThrough else null
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                task.relatedSubject?.let {
+                    Text(
+                        text = it,
+                        fontSize = 12.sp,
+                        color = textSecondary,
+                        fontFamily = Roboto
+                    )
+                    if (task.dueDate != null) {
+                        Text("•", fontSize = 12.sp, color = textSecondary)
+                    }
+                }
+
+                task.dueDate?.let {
+                    val formattedDate = SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(it))
+                    Text(
+                        text = when (status) {
+                            TaskVisualStatus.OVERDUE -> "Overdue"
+                            else -> "Due $formattedDate"
+                        },
+                        fontSize = 12.sp,
+                        color = if (status == TaskVisualStatus.OVERDUE) Color(0xFFD32F2F) else textSecondary,
+                        fontWeight = if (status == TaskVisualStatus.OVERDUE) FontWeight.SemiBold else FontWeight.Normal,
+                        fontFamily = Roboto
+                    )
+                }
             }
-        }
-        task.dueDate?.let {
-            val formattedDate = SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(it))
-            Text("Due $formattedDate", fontSize = 12.sp, color = textSecondary, fontFamily = Roboto)
         }
     }
 }
@@ -432,7 +580,8 @@ private fun EmptySessionsCard(onClick: () -> Unit) {
 @Composable
 private fun TasksPanel(
     tasks: List<CasualTask>,
-    onNavigateToCasualSetup: () -> Unit
+    onNavigateToCasualSetup: () -> Unit,
+    onTaskCompletionToggled: (String, Boolean) -> Unit
 ) {
     Column {
         Text("Your Tasks", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = textPrimary, fontFamily = Roboto)
@@ -474,7 +623,7 @@ private fun TasksPanel(
             } else {
                 Column(modifier = Modifier.padding(16.dp)) {
                     tasks.forEachIndexed { index, task ->
-                        TaskRow(task = task)
+                        TaskRow(task = task, onTaskCompletionToggled = onTaskCompletionToggled)
                         if (index < tasks.size - 1) {
                             Divider(color = softDividerLine, modifier = Modifier.padding(vertical = 12.dp))
                         }

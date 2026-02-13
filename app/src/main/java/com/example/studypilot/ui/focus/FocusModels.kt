@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.studypilot.ui.shared.Difficulty
 import com.example.studypilot.ui.shared.Priority
+import java.util.UUID
 
 // region Enums
 enum class BreakType { Short, Long, Pomodoro }
@@ -23,11 +24,13 @@ data class FocusSubject(
 )
 
 data class FocusTask(
+    val id: String = UUID.randomUUID().toString(),
     val name: String,
     val type: TaskType,
     val effort: Effort,
     val dueDate: Long? = null,
-    val relatedSubject: String? = null
+    val relatedSubject: String? = null,
+    val completed: Boolean = false
 )
 
 @Entity(tableName = "focus_details")

@@ -5,7 +5,13 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.studypilot.data.SessionRepository
 import com.example.studypilot.data.UserPreferencesRepository
+import com.example.studypilot.ui.casual.CasualTask
 import com.example.studypilot.ui.mode.StudyMode
+import com.example.studypilot.ui.shared.Difficulty
+import com.example.studypilot.ui.shared.FocusSubject
+import com.example.studypilot.ui.shared.FocusTask
+import com.example.studypilot.ui.shared.Priority
+import com.example.studypilot.ui.shared.Subject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +28,9 @@ import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import kotlin.math.floor
 
+
+private var cachedExamSubjectsWithData: List<Subject> = emptyList()
+private var cachedFocusSubjectsWithData: List<FocusSubject> = emptyList()
 class PlannerViewModel(
     private val sessionRepository: SessionRepository,
     private val preferencesRepository: UserPreferencesRepository,
@@ -42,51 +51,89 @@ class PlannerViewModel(
     private var cachedFocusSubjects: List<String> = emptyList()
     private var cachedCasualSubjects: List<String> = emptyList()
 
+    private var cachedFocusTasks: List<FocusTask> = emptyList()
+    private var cachedCasualTasks: List<CasualTask> = emptyList()
+
+    // ── cached daily plans (saved session order from HomeViewModel) ──
+    private var cachedDailyPlan: List<com.example.studypilot.ui.shared.StudySession> = emptyList()
+    private var cachedDailyPlanDate: String = ""
+    private var cachedFocusDailyPlan: List<com.example.studypilot.ui.shared.StudySession> = emptyList()
+    private var cachedFocusPlanDate: String = ""
+    private var cachedCasualDailyPlan: List<com.example.studypilot.ui.shared.StudySession> = emptyList()
+    private var cachedCasualPlanDate: String = ""
+
+    private var cachedExemptedSessions: Map<String, List<Int>> = emptyMap()
+
     // ── live snapshot of every DB row for this user ──
     private var allDbSessions: List<com.example.studypilot.data.StudySession> = emptyList()
+
+    private var userStartDate: LocalDate? = null
 
     // ── redistribution map built during rebuildCalendar, consumed by rebuildDayDetail ──
     private var cachedRedistributionMap: Map<LocalDate, Int> = emptyMap()
 
     init {
         viewModelScope.launch {
-            // 1. Read prefs once on IO (same pattern as AnalyticsViewModel)
-            withContext(Dispatchers.IO) {
-                try {
-                    val prefs = preferencesRepository.getUserPreferences(userId).first()
-                    if (prefs != null) {
-                        cachedMode = prefs.selectedMode
-                        when (prefs.selectedMode) {
-                            StudyMode.EXAM -> {
-                                cachedDailyStudyHours   = prefs.examPreferences.dailyStudyHours ?: 0.5f
-                                cachedSessionLengthMinutes = prefs.examPreferences.sessionLength.minutes ?: 25
-                                cachedExamDateMs        = prefs.examDate ?: 0L
-                                cachedPlanStartMs       = prefs.planStartDate ?: 0L
-                                cachedExamSubjects      = prefs.examSubjects.map { it.name }
-                            }
-                            StudyMode.FOCUS -> {
-                                cachedDailyStudyHours      = prefs.focusPreferences.dailyStudyHours ?: 0.5f
-                                cachedSessionLengthMinutes = prefs.focusPreferences.sessionLength.minutes ?: 25
-                                cachedFocusSubjects = prefs.focusSubjects.map { it.name }
-                                // TODO: Add skipSundays field to FocusPreferences data class
-                                cachedSkipSundaysInFocus = false // prefs.focusPreferences.skipSundays ?: false
-                            }
-                            StudyMode.CASUAL -> {
-                                cachedDailyStudyHours      = prefs.casualPreferences.dailyStudyHours ?: 0.5f
-                                cachedSessionLengthMinutes = prefs.casualPreferences.sessionLength.minutes ?: 25
-                                cachedCasualSubjects = prefs.casualSubjects.map { it.name }
-                            }
-                        }
+            // Launch sessions collector in parallel
+            launch {
+                sessionRepository.getSessionsForUser(userId).collectLatest { sessions ->
+                    allDbSessions = sessions
+
+                    // Calculate user's start date (earliest session timestamp OR today if no sessions yet)
+                    userStartDate = if (sessions.isNotEmpty()) {
+                        sessions.minOfOrNull { epochMsToLocalDate(it.timestamp) }
+                    } else {
+                        LocalDate.now() // User just signed up today
                     }
-                } catch (e: Exception) {
-                    android.util.Log.e("PlannerViewModel", "prefs load failed", e)
+                    android.util.Log.d("PlannerViewModel", "User start date: $userStartDate")
+
+                    rebuildCalendar()
                 }
-                Unit
             }
 
-            // 2. Live-collect sessions – every new completion triggers a full calendar rebuild
-            sessionRepository.getSessionsForUser(userId).collectLatest { sessions ->
-                allDbSessions = sessions
+            // Collect preferences changes continuously
+            preferencesRepository.getUserPreferences(userId).collectLatest { prefs ->
+                if (prefs == null) return@collectLatest
+
+                android.util.Log.d("PlannerViewModel", "Preferences changed - reloading")
+
+                // Update cached preferences
+                cachedMode = prefs.selectedMode
+                when (prefs.selectedMode) {
+                    StudyMode.EXAM -> {
+                        cachedDailyStudyHours   = prefs.examPreferences.dailyStudyHours ?: 0.5f
+                        cachedSessionLengthMinutes = prefs.examPreferences.sessionLength.minutes ?: 25
+                        cachedExamDateMs        = prefs.examDate ?: 0L
+                        cachedPlanStartMs       = prefs.planStartDate ?: 0L
+                        cachedExamSubjects      = prefs.examSubjects.map { it.name }
+                        cachedExamSubjectsWithData = prefs.examSubjects
+                        cachedDailyPlan = prefs.dailyPlan
+                        cachedDailyPlanDate = prefs.dailyPlanDate ?: ""
+                    }
+                    StudyMode.FOCUS -> {
+                        cachedDailyStudyHours      = prefs.focusPreferences.dailyStudyHours ?: 0.5f
+                        cachedSessionLengthMinutes = prefs.focusPreferences.sessionLength.minutes ?: 25
+                        cachedFocusSubjects = prefs.focusSubjects.map { it.name }
+                        cachedFocusSubjectsWithData = prefs.focusSubjects
+                        cachedFocusTasks = prefs.tasks
+                        cachedSkipSundaysInFocus = false
+                        cachedFocusDailyPlan = prefs.focusDailyPlan
+                        cachedFocusPlanDate = prefs.focusPlanDate ?: ""
+                    }
+                    StudyMode.CASUAL -> {
+                        cachedDailyStudyHours      = prefs.casualPreferences.dailyStudyHours ?: 0.5f
+                        cachedSessionLengthMinutes = prefs.casualPreferences.sessionLength.minutes ?: 25
+                        cachedCasualSubjects = prefs.casualSubjects.map { it.name }
+                        cachedCasualTasks = prefs.casualTasks
+                        cachedCasualDailyPlan = prefs.casualDailyPlan
+                        cachedCasualPlanDate = prefs.casualPlanDate ?: ""
+                    }
+                }
+
+                cachedExemptedSessions = prefs.exemptedSessions
+                android.util.Log.d("PlannerViewModel", "Reloaded prefs: mode=$cachedMode, dailyPlanDate=$cachedDailyPlanDate, subjects=${cachedExamSubjectsWithData.size}")
+
+                // Rebuild calendar with new preferences
                 rebuildCalendar()
             }
         }
@@ -99,6 +146,164 @@ class PlannerViewModel(
         rebuildDayDetail(date)
     }
 
+    fun exemptSession(date: LocalDate, sessionIndex: Int) {
+        viewModelScope.launch {
+            val dateStr = date.toString()
+
+            android.util.Log.d("PlannerViewModel", "Exempting session $sessionIndex on $dateStr")
+
+            withContext(Dispatchers.IO) {
+                try {
+                    // Load current preferences
+                    val currentPrefs = preferencesRepository.getUserPreferences(userId).first()
+                    if (currentPrefs == null) {
+                        android.util.Log.e("PlannerViewModel", "Cannot exempt - prefs not loaded")
+                        return@withContext
+                    }
+
+                    // Update exemptions map
+                    val updatedExemptions = currentPrefs.exemptedSessions.toMutableMap()
+                    val exemptionsForDate = updatedExemptions[dateStr]?.toMutableList() ?: mutableListOf()
+                    if (sessionIndex !in exemptionsForDate) {
+                        exemptionsForDate.add(sessionIndex)
+                        updatedExemptions[dateStr] = exemptionsForDate.sorted()
+                    }
+
+                    // Update cached exemptions
+                    cachedExemptedSessions = updatedExemptions
+
+                    // If exempting today's session, update the saved daily plan
+                    val today = java.time.LocalDate.now().toString()
+                    val updatedPrefs = if (dateStr == today) {
+                        val (currentPlan, planDateField) = when (cachedMode) {
+                            StudyMode.EXAM -> currentPrefs.dailyPlan to currentPrefs.dailyPlanDate
+                            StudyMode.FOCUS -> currentPrefs.focusDailyPlan to currentPrefs.focusPlanDate
+                            StudyMode.CASUAL -> currentPrefs.casualDailyPlan to currentPrefs.casualPlanDate
+                        }
+
+                        // Only update if there's a saved plan for today
+                        if (planDateField == today && currentPlan.isNotEmpty()) {
+                            // Remove exempted session and renumber
+                            val updatedPlan = currentPlan
+                                .filterIndexed { index, _ -> index !in exemptionsForDate }
+                                .mapIndexed { newIndex, session ->
+                                    session.copy(sessionNumber = newIndex + 1)
+                                }
+
+                            android.util.Log.d("PlannerViewModel", "Updated daily plan: ${currentPlan.size} -> ${updatedPlan.size} sessions")
+
+                            when (cachedMode) {
+                                StudyMode.EXAM -> currentPrefs.copy(
+                                    dailyPlan = updatedPlan,
+                                    dailyPlanDate = today,
+                                    exemptedSessions = updatedExemptions,
+
+                                    )
+                                StudyMode.FOCUS -> currentPrefs.copy(
+                                    focusDailyPlan = updatedPlan,
+                                    focusPlanDate = today,
+                                    exemptedSessions = updatedExemptions,
+
+                                    )
+                                StudyMode.CASUAL -> currentPrefs.copy(
+                                    casualDailyPlan = updatedPlan,
+                                    casualPlanDate = today,
+                                    exemptedSessions = updatedExemptions,
+
+                                    )
+                            }
+                        } else {
+                            // Just update exemptions
+                            currentPrefs.copy(
+                                exemptedSessions = updatedExemptions,
+
+                                )
+                        }
+                    } else {
+                        // Not today - just save exemptions
+                        currentPrefs.copy(
+                            exemptedSessions = updatedExemptions,
+
+                            )
+                    }
+
+                    preferencesRepository.saveUserPreferences(updatedPrefs)
+                    android.util.Log.d("PlannerViewModel", "Saved exemption and updated preferences")
+
+                } catch (e: Exception) {
+                    android.util.Log.e("PlannerViewModel", "Failed to exempt session", e)
+                }
+            }
+
+            // Rebuild UI to reflect changes
+            rebuildCalendar()
+        }
+    }
+
+    fun doItToday(sessionIndex: Int, fromDate: LocalDate) {
+        if (cachedMode != StudyMode.FOCUS) return
+
+        viewModelScope.launch {
+            val todayStr = LocalDate.now().toString()
+            val today = LocalDate.now()
+
+            withContext(Dispatchers.IO) {
+                try {
+                    val currentPrefs = preferencesRepository.getUserPreferences(userId).first()
+                    if (currentPrefs == null) return@withContext
+
+                    // Don't allow "Do It Today" on signup day
+                    if (userStartDate != null && userStartDate == today) {
+                        android.util.Log.d("PlannerViewModel", "Cannot move sessions on signup day")
+                        return@withContext
+                    }
+
+                    // Get current today's plan
+                    val currentPlan = if (currentPrefs.focusPlanDate == todayStr) {
+                        currentPrefs.focusDailyPlan.toMutableList()
+                    } else {
+                        mutableListOf()
+                    }
+
+                    // Add ALL of yesterday's missed sessions to today
+                    val missedFromYesterday = addYesterdaysMissedSessionsToToday()
+
+                    android.util.Log.d("PlannerViewModel", "Adding ${missedFromYesterday.size} missed sessions from yesterday to today")
+
+                    missedFromYesterday.forEach { missed ->
+                        val newSession = com.example.studypilot.ui.shared.StudySession(
+                            sessionNumber = currentPlan.size + 1,
+                            subject = missed.subjectName,
+                            durationMinutes = missed.durationMinutes,
+                            status = com.example.studypilot.ui.shared.SessionStatus.UPCOMING
+                        )
+                        currentPlan.add(newSession)
+                    }
+
+                    // Renumber all sessions
+                    val renumberedPlan = currentPlan.mapIndexed { index, session ->
+                        session.copy(sessionNumber = index + 1)
+                    }
+
+                    // Save
+                    val updatedPrefs = currentPrefs.copy(
+                        focusDailyPlan = renumberedPlan,
+                        focusPlanDate = todayStr,
+                    )
+
+                    preferencesRepository.saveUserPreferences(updatedPrefs)
+
+                    android.util.Log.d("PlannerViewModel", "Added ${missedFromYesterday.size} sessions to today")
+
+                } catch (e: Exception) {
+                    android.util.Log.e("PlannerViewModel", "Failed to add to today", e)
+                }
+            }
+
+            // Refresh
+            rebuildCalendar()
+        }
+    }
 
     /** Weekly nav (focus / casual default view) */
     fun navigateWeek(forward: Boolean) {
@@ -139,9 +344,41 @@ class PlannerViewModel(
                 rangeEnd = if (examEndDate != null) examEndDate.minusDays(1) else today.plusMonths(1)
             }
             StudyMode.FOCUS, StudyMode.CASUAL -> {
-                // Always a Mon–Sun week around the selected date
-                rangeStart = _uiState.value.selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-                rangeEnd   = _uiState.value.selectedDate.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
+                val today = LocalDate.now()
+                val signupDate = userStartDate ?: today
+
+                // Calculate the week containing selectedDate
+                val weekStart = _uiState.value.selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                val weekEnd = _uiState.value.selectedDate.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
+
+                // Don't show weeks before signup date
+                if (weekEnd.isBefore(signupDate)) {
+                    _uiState.value = _uiState.value.copy(
+                        selectedMode = cachedMode,
+                        calendarDates = emptyList(),
+                        missedBacklog = 0,
+                        weeklyPool = null,
+                        examEndDate = null,
+                        isLoading = false
+                    )
+                    _uiState.value = _uiState.value.copy(selectedDayDetail = null)
+                    return
+                }
+
+                rangeStart = if (weekStart.isBefore(signupDate)) {
+                    signupDate // Start from signup date
+                } else {
+                    weekStart // Normal Monday start
+                }
+
+                // Always end on Saturday for Casual mode (Sunday is skipped)
+                rangeEnd = if (cachedMode == StudyMode.CASUAL) {
+                    weekStart.plusDays(5) // Monday + 5 = Saturday
+                } else {
+                    weekEnd // Sunday for Focus mode
+                }
+
+                android.util.Log.d("PlannerViewModel", "Week range: $rangeStart to $rangeEnd (userStart=$userStartDate, selectedDate=${_uiState.value.selectedDate})")
             }
         }
 
@@ -238,21 +475,23 @@ class PlannerViewModel(
             computeRedistribution(cumulativeMissed, today, examEndDate)
         else emptyMap()
 
-        // ── casual weekly pool ──
+        // ── casual weekly pool ─
         val weeklyPool: WeeklyPoolInfo? = if (cachedMode == StudyMode.CASUAL) {
-            val ws = _uiState.value.selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-            val we = _uiState.value.selectedDate.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
-            var done = 0
-            var d = ws
-            while (!d.isAfter(we)) {
-                if (!shouldSkipSunday(d)) {
-                    done += (sessionsByDate[d]?.count { it.completed } ?: 0)
-                }
-                d = d.plusDays(1)
+            // Calculate based on actual calendar dates shown (respects signup date automatically)
+            var totalCompleted = 0
+            var totalDaysInWeek = 0
+
+            calendarDates.forEach { dateInfo ->
+                val completedOnDay = (sessionsByDate[dateInfo.date]?.count { it.completed } ?: 0)
+                totalCompleted += completedOnDay.coerceAtMost(sessionsPerDay)
+                totalDaysInWeek++
             }
-            // Casual mode: 6 days (excluding Sunday)
-            val daysInWeek = 6
-            WeeklyPoolInfo(ws, we, sessionsPerDay * daysInWeek, done)
+
+            // Total planned = sessionsPerDay × number of active days shown
+            val totalPlanned = sessionsPerDay * totalDaysInWeek
+            android.util.Log.d("PlannerViewModel", "Weekly pool: $totalCompleted/$totalPlanned across $totalDaysInWeek days (signup-aware)")
+
+            WeeklyPoolInfo(rangeStart, rangeEnd, totalPlanned, totalCompleted)
         } else null
 
         _uiState.value = _uiState.value.copy(
@@ -273,6 +512,25 @@ class PlannerViewModel(
         val isFuture = date.isAfter(today)
         val isToday  = date.isEqual(today)
 
+        // Don't show planned sessions for dates before user signup
+        if (userStartDate != null && date.isBefore(userStartDate!!)) {
+            _uiState.value = _uiState.value.copy(
+                selectedDayDetail = DayDetail(
+                    date = date,
+                    plannedSessions = emptyList(),
+                    completedSessions = emptyList(),
+                    plannedCount = 0,
+                    completedCount = 0,
+                    totalStudyMinutes = 0,
+                    isFutureDate = isFuture,
+                    isToday = isToday,
+                    redistributedExtra = 0,
+                    tasksForDay = emptyList()
+                )
+            )
+            return
+        }
+
         val sessionsPerDay = deriveSessions(cachedDailyStudyHours, cachedSessionLengthMinutes)
         val sessionsByDate = allDbSessions.groupBy { epochMsToLocalDate(it.timestamp) }
         val dbForDay       = sessionsByDate[date] ?: emptyList()
@@ -280,37 +538,153 @@ class PlannerViewModel(
         val extraRedistributed = cachedRedistributionMap[date] ?: 0
         val totalPlanned       = sessionsPerDay + extraRedistributed
 
-        // Greedily match completed DB rows to planned slots by subject name
-        val completedNames = dbForDay.filter { it.completed }.map { it.subjectName }.toMutableList()
+        val shouldGeneratePlanned = when(cachedMode) {
+            StudyMode.EXAM -> {
+                if (cachedExamDateMs <= 0L) {
+                    false
+                } else {
+                    val examDate = epochMsToLocalDate(cachedExamDateMs)
+                    val planStart =
+                        if (cachedPlanStartMs > 0L)
+                            epochMsToLocalDate(cachedPlanStartMs)
+                        else
+                            userStartDate ?: today
 
-        // Don't generate planned sessions for past days without DB data
-        // Don't generate planned sessions for:
-// - Past days without DB data
-// - Exam mode: on or after exam date
-        val shouldGeneratePlanned = when {
-            cachedMode == StudyMode.EXAM && cachedExamDateMs > 0L -> {
-                val examDate = epochMsToLocalDate(cachedExamDateMs)
-                date.isBefore(examDate) && (!date.isBefore(today) || dbForDay.isNotEmpty())
+                    // Use same logic as Focus mode - respect user start date
+                    val effectiveStart = if (userStartDate != null && planStart.isBefore(userStartDate!!)) {
+                        userStartDate!!
+                    } else {
+                        planStart
+                    }
+
+                    !date.isBefore(effectiveStart) && date.isBefore(examDate)
+                }
             }
-            else -> !date.isBefore(today) || dbForDay.isNotEmpty()
+            StudyMode.FOCUS -> {
+                val weekStart = _uiState.value.selectedDate.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+                val weekEnd = _uiState.value.selectedDate.with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.SUNDAY))
+
+                val effectiveStart = if (userStartDate != null && weekStart.isBefore(userStartDate!!)) {
+                    userStartDate!!
+                } else {
+                    weekStart
+                }
+
+                !date.isBefore(effectiveStart) && !date.isAfter(weekEnd)
+            }
+            StudyMode.CASUAL -> {
+                val weekStart = _uiState.value.selectedDate.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+                val weekEnd = _uiState.value.selectedDate.with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.SUNDAY))
+
+                val effectiveStart = if (userStartDate != null && weekStart.isBefore(userStartDate!!)) {
+                    userStartDate!!
+                } else {
+                    weekStart
+                }
+
+                !date.isBefore(effectiveStart) && !date.isAfter(weekEnd)
+            }
         }
 
         val plannedSessions = if (shouldGeneratePlanned) {
-            (1..totalPlanned).map { i ->
-                val subjectName = when {
-                    cachedMode == StudyMode.EXAM && cachedExamSubjects.isNotEmpty() ->
-                        cachedExamSubjects[(i - 1) % cachedExamSubjects.size]
-                    cachedMode == StudyMode.FOCUS && cachedFocusSubjects.isNotEmpty() ->
-                        cachedFocusSubjects[(i - 1) % cachedFocusSubjects.size]
-                    cachedMode == StudyMode.CASUAL && cachedCasualSubjects.isNotEmpty() ->
-                        cachedCasualSubjects[(i - 1) % cachedCasualSubjects.size]
-                    else -> "Session $i"
+            val dateStr = date.toString()
+            val savedPlanForToday = when (cachedMode) {
+                StudyMode.EXAM -> if (cachedDailyPlanDate == dateStr) {
+                    // Validate that all subjects in saved plan exist in current subject list
+                    val currentSubjects = cachedExamSubjectsWithData.map { it.name }.toSet()
+                    val planSubjects = cachedDailyPlan.map { it.subject }.toSet()
+                    val allValid = planSubjects.all { it in currentSubjects }
+
+                    if (!allValid) {
+                        android.util.Log.w("PlannerViewModel", "Saved plan has invalid subjects - regenerating. Plan subjects: $planSubjects, Current subjects: $currentSubjects")
+                        null
+                    } else {
+                        cachedDailyPlan
+                    }
+                } else null
+                StudyMode.FOCUS -> if (cachedFocusPlanDate == dateStr) cachedFocusDailyPlan else null
+                StudyMode.CASUAL -> if (cachedCasualPlanDate == dateStr) cachedCasualDailyPlan else null
+            }
+
+            val basePlannedSessions = if (savedPlanForToday != null && savedPlanForToday.isNotEmpty()) {
+                // Use saved plan order (includes swaps!)
+                android.util.Log.d("PlannerViewModel", "Using saved plan for $dateStr with ${savedPlanForToday.size} sessions")
+                android.util.Log.d("PlannerViewModel", "Saved plan subjects: ${savedPlanForToday.map { it.subject }}")
+
+                val completedNames = dbForDay.filter { it.completed }.map { it.subjectName }.toMutableList()
+
+                savedPlanForToday.mapIndexed { i, session ->
+                    val wasCompleted = completedNames.remove(session.subject)
+                    android.util.Log.d("PlannerViewModel", "Session $i: subject='${session.subject}'")
+                    PlannedSessionInfo(
+                        sessionNumber = i + 1,
+                        subjectName = session.subject,
+                        durationMinutes = cachedSessionLengthMinutes,
+                        wasCompleted = wasCompleted,
+                        isRedistributed = i >= sessionsPerDay  // Mark sessions beyond base count
+                    )
+                }
+            } else {
+                // Generate from scratch using SessionGenerator
+                android.util.Log.d("PlannerViewModel", "No saved plan for $dateStr, generating fresh")
+
+                val subjectOrder = when (cachedMode) {
+                    StudyMode.EXAM -> {
+                        if (cachedExamSubjectsWithData.isEmpty()) {
+                            android.util.Log.w("PlannerViewModel", "No exam subjects loaded yet - using empty list")
+                            emptyList()
+                        } else {
+                            // Always use subjects with data, just like HomeViewModel does
+                            com.example.studypilot.utils.SessionGenerator.generateExamSessionOrder(
+                                cachedExamSubjectsWithData, totalPlanned
+                            )
+                        }
+                    }
+                    StudyMode.FOCUS -> {
+                        if (cachedFocusSubjectsWithData.isEmpty()) {
+                            emptyList()
+                        } else {
+                            com.example.studypilot.utils.SessionGenerator.generateFocusSessionOrder(
+                                cachedFocusSubjectsWithData, totalPlanned
+                            )
+                        }
+                    }
+                    StudyMode.CASUAL -> {
+                        com.example.studypilot.utils.SessionGenerator.generateCasualSessionOrder(
+                            cachedCasualSubjects, totalPlanned
+                        )
+                    }
                 }
 
-                val wasCompleted = completedNames.remove(subjectName)  // removes first match only
+                val completedNames = dbForDay.filter { it.completed }.map { it.subjectName }.toMutableList()
 
-                PlannedSessionInfo(i, subjectName, cachedSessionLengthMinutes, wasCompleted)
+                subjectOrder.mapIndexed { i, subjectName ->
+                    val wasCompleted = completedNames.remove(subjectName)
+                    PlannedSessionInfo(
+                        i + 1,
+                        subjectName,
+                        cachedSessionLengthMinutes,
+                        wasCompleted,
+                        isRedistributed = i >= sessionsPerDay
+                    )
+                }
             }
+
+            // Filter out exempted sessions
+            val exemptedIndices = cachedExemptedSessions[dateStr] ?: emptyList()
+            val filteredSessions = basePlannedSessions
+                .filterIndexed { index, _ -> index !in exemptedIndices }
+                .mapIndexed { newIndex, session ->
+                    session.copy(sessionNumber = newIndex + 1)
+                }
+
+            // ADD MISSED SESSIONS FROM PAST (Focus mode only, today only)
+            val finalSessions = filteredSessions
+
+
+            android.util.Log.d("PlannerViewModel", "Day $dateStr: base=${sessionsPerDay}, redistributed=$extraRedistributed, exempted=${exemptedIndices.size}, final=${finalSessions.size}")
+
+            finalSessions
         } else {
             emptyList()
         }
@@ -318,6 +692,48 @@ class PlannerViewModel(
         val completedSessions = dbForDay.map {
             CompletedSessionInfo(it.subjectName, it.elapsedSeconds / 60, it.completed, it.timestamp)
         }.sortedBy { it.timestamp }
+
+        // Filter tasks with due date matching this date
+        val tasksForThisDay = mutableListOf<TaskInfo>()
+        when (cachedMode) {
+            StudyMode.FOCUS -> {
+                cachedFocusTasks.forEach { task ->
+                    task.dueDate?.let { dueMs ->
+                        val taskDate = epochMsToLocalDate(dueMs)
+                        if (taskDate.isEqual(date)) {
+                            tasksForThisDay.add(
+                                TaskInfo(
+                                    taskName = task.name,
+                                    relatedSubject = task.relatedSubject,
+                                    dueDate = dueMs,
+                                    taskType = "Focus",
+                                    completed = task.completed
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            StudyMode.CASUAL -> {
+                cachedCasualTasks.forEach { task ->
+                    task.dueDate?.let { dueMs ->
+                        val taskDate = epochMsToLocalDate(dueMs)
+                        if (taskDate.isEqual(date)) {
+                            tasksForThisDay.add(
+                                TaskInfo(
+                                    taskName = task.name,
+                                    relatedSubject = task.relatedSubject,
+                                    dueDate = dueMs,
+                                    taskType = "Casual",
+                                    completed = task.completed
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            else -> { /* Exam mode has no tasks */ }
+        }
 
         _uiState.value = _uiState.value.copy(
             selectedDayDetail = DayDetail(
@@ -329,10 +745,81 @@ class PlannerViewModel(
                 totalStudyMinutes  = dbForDay.sumOf { it.elapsedSeconds } / 60,
                 isFutureDate       = isFuture,
                 isToday            = isToday,
-                redistributedExtra = extraRedistributed
+                redistributedExtra = extraRedistributed,
+                tasksForDay        = tasksForThisDay
             )
         )
+
     }
+
+    private fun calculateMissedSessionsForToday(): List<MissedSessionInfo> {
+        return emptyList()
+    }
+
+    private fun addYesterdaysMissedSessionsToToday(): List<MissedSessionInfo> {
+        if (cachedMode != StudyMode.FOCUS) return emptyList()
+
+        val today = LocalDate.now()
+        val yesterday = today.minusDays(1)
+
+        // Don't add if yesterday was signup day or before
+        if (userStartDate != null && (yesterday.isBefore(userStartDate) || yesterday == userStartDate)) {
+            android.util.Log.d("PlannerViewModel", "Yesterday was signup day or before - no missed sessions")
+            return emptyList()
+        }
+
+        // Skip if yesterday was Sunday and user skips Sundays
+        if (shouldSkipSunday(yesterday)) {
+            android.util.Log.d("PlannerViewModel", "Yesterday was Sunday - skipped")
+            return emptyList()
+        }
+
+        val missedSessions = mutableListOf<MissedSessionInfo>()
+        val sessionsByDate = allDbSessions.groupBy { epochMsToLocalDate(it.timestamp) }
+        val sessionsPerDay = deriveSessions(cachedDailyStudyHours, cachedSessionLengthMinutes)
+
+        val yesterdaySessions = sessionsByDate[yesterday] ?: emptyList()
+        val completedCount = yesterdaySessions.count { it.completed }
+        val missedCount = (sessionsPerDay - completedCount).coerceAtLeast(0)
+
+        if (missedCount > 0 && cachedFocusSubjectsWithData.isNotEmpty()) {
+            // Figure out which subjects were missed yesterday
+            val completedSubjects = yesterdaySessions.filter { it.completed }.map { it.subjectName }
+            val availableSubjects = cachedFocusSubjectsWithData.map { it.name }
+
+            // Find subjects that weren't completed enough times
+            val missedSubjects = availableSubjects.filter { subject ->
+                val expectedCount = (sessionsPerDay / availableSubjects.size) + 1
+                val actualCount = completedSubjects.count { it == subject }
+                actualCount < expectedCount
+            }
+
+            repeat(missedCount) { index ->
+                val subjectName = if (missedSubjects.isNotEmpty()) {
+                    missedSubjects[index % missedSubjects.size]
+                } else {
+                    availableSubjects.getOrNull(index % availableSubjects.size) ?: "General Study"
+                }
+
+                missedSessions.add(
+                    MissedSessionInfo(
+                        date = yesterday, // These are from yesterday
+                        subjectName = subjectName,
+                        durationMinutes = cachedSessionLengthMinutes
+                    )
+                )
+            }
+        }
+
+        android.util.Log.d("PlannerViewModel", "Added ${missedSessions.size} missed sessions from yesterday")
+        return missedSessions
+    }
+
+    data class MissedSessionInfo(
+        val date: LocalDate,
+        val subjectName: String,
+        val durationMinutes: Int
+    )
 
     // ─── pure helpers ────────────────────────────────────────────────────────
 

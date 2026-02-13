@@ -98,6 +98,7 @@ class AnalyticsViewModel(
                 val totalStudyTime = sessions.sumOf { it.elapsedSeconds }
 
                 val subjectStats = sessions
+                    .filter { it.subjectName != "General Study" }
                     .groupBy { it.subjectName }
                     .map { (subject, sessionsList) ->
                         val subjectTime = sessionsList.sumOf { it.elapsedSeconds }

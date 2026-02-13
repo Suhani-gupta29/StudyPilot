@@ -14,6 +14,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.studypilot.ui.home.HomeBottomNavigationBar
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Brush
+
+
+
+private val gradientTop = Color(0xFFE3F2FD)
+private val gradientBottom = Color(0xFFFFFFFF)
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -23,7 +29,8 @@ fun AnalyticsScreen(
     viewModel: AnalyticsViewModel = viewModel(),
     onNavigateToSettings: () -> Unit = {},
     onNavigateToHome: () -> Unit = {},
-    onNavigateToPlanner: () -> Unit = {}
+    onNavigateToPlanner: () -> Unit = {},
+    onNavigateToSubjects: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -41,78 +48,79 @@ fun AnalyticsScreen(
                 onNavigateToHome = onNavigateToHome,
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToPlanner = onNavigateToPlanner,
+                onNavigateToSubjects = onNavigateToSubjects,
                 onNavigateToAnalytics = {},
                 activeIndex = 3
             )
         },
-        containerColor = Color(0xFFF8FAFC)
+
     ) { padding ->
 
-        uiState?.let { state ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Today's Summary
-                item { DailySummaryCard(state.dailySummary) }
-
-                // Study Streak
-                item {
-                    StreakCard(
-                        currentStreak = state.currentStreak,
-                        longestStreak = state.longestStreak
-                    )
-                }
-
-                // Weekly Trend
-                item {
-                    WeeklyTrendCard(
-                        thisWeekSeconds = state.thisWeekSeconds,
-                        lastWeekSeconds = state.lastWeekSeconds,
-                        weeklyChange = state.weeklyChange
-                    )
-                }
-
-                // Weekly Bar Chart
-                item { WeeklyBarChart(state.weeklyStudy) }
-
-                // Subject Pie Chart
-                if (state.subjectStats.isNotEmpty()) {
-                    item { SubjectPieChart(state.subjectStats) }
-                }
-
-                // Subject Details
-                item { SubjectTimeBreakdown(state.subjectStats) }
-
-                item { SubjectProgressSection(state.subjectStats) }
-            }
-        } ?: Box(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentAlignment = Alignment.Center
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(gradientTop, gradientBottom)
+                    )
+                )
+                .padding(padding)
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "📊",
-                    fontSize = 48.sp
-                )
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "No data available yet",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = Color(0xFF1E293B)
-                )
-                Text(
-                    text = "Start studying to see your analytics!",
-                    fontSize = 14.sp,
-                    color = Color(0xFF64748B)
-                )
+
+            uiState?.let { state ->
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item { DailySummaryCard(state.dailySummary) }
+
+                    item {
+                        StreakCard(
+                            currentStreak = state.currentStreak,
+                            longestStreak = state.longestStreak
+                        )
+                    }
+
+                    item {
+                        WeeklyTrendCard(
+                            thisWeekSeconds = state.thisWeekSeconds,
+                            lastWeekSeconds = state.lastWeekSeconds,
+                            weeklyChange = state.weeklyChange
+                        )
+                    }
+
+                    item { WeeklyBarChart(state.weeklyStudy) }
+
+                    if (state.subjectStats.isNotEmpty()) {
+                        item { SubjectPieChart(state.subjectStats) }
+                    }
+
+                    item { SubjectTimeBreakdown(state.subjectStats) }
+
+                    item { SubjectProgressSection(state.subjectStats) }
+                }
+            } ?: Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("📊", fontSize = 48.sp)
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "No data available yet",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = Color(0xFF1E293B)
+                    )
+                    Text(
+                        text = "Start studying to see your analytics!",
+                        fontSize = 14.sp,
+                        color = Color(0xFF64748B)
+                    )
+                }
             }
         }
+
     }
 }

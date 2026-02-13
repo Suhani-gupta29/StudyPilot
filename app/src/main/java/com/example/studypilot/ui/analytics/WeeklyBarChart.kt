@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.studypilot.ui.theme.Roboto
 
 @Composable
 fun WeeklyBarChart(
@@ -38,7 +39,8 @@ fun WeeklyBarChart(
         Column(modifier = Modifier.padding(20.dp)) {
             Text(
                 text = "Weekly Study Time",
-                style = MaterialTheme.typography.titleLarge,
+                fontSize = 16.sp,
+                fontFamily = Roboto,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1E293B)
             )

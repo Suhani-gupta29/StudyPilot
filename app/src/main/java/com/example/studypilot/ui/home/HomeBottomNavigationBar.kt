@@ -26,6 +26,7 @@ fun HomeBottomNavigationBar(
     onNavigateToSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
     onNavigateToPlanner: () -> Unit,
+    onNavigateToSubjects: () -> Unit,
     onNavigateToHome: () -> Unit = {},
     activeIndex: Int
 ) {
@@ -63,6 +64,7 @@ fun HomeBottomNavigationBar(
                         when (index) {
                             0 -> onNavigateToHome()
                             1 -> onNavigateToPlanner()
+                            2 -> onNavigateToSubjects()
                             3 -> onNavigateToAnalytics()
                             4 -> onNavigateToSettings()
                         }

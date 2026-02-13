@@ -60,6 +60,9 @@ private val urgencyWarningBg = Color(0xFFFFF4E5)
 private val urgencyCriticalBg = Color(0xFFFDECEA)
 private val alertBackground = Color(0xFFEEF5FF)
 
+private val gradientTop = Color(0xFFE3F2FD)
+private val gradientBottom = Color(0xFFFFFFFF)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreenExam(
@@ -73,6 +76,7 @@ fun HomeScreenExam(
     onNavigateToSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
     onNavigateToPlanner: () -> Unit,
+    onNavigateToSubjects: () -> Unit,
     onEnterSwapMode: () -> Unit,
     onCancelSwap: () -> Unit,
     onSaveSwap: () -> Unit,
@@ -87,66 +91,95 @@ fun HomeScreenExam(
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = { ExamTopAppBar(scrollBehavior = scrollBehavior) },
-        bottomBar = { HomeBottomNavigationBar(onNavigateToSettings = onNavigateToSettings, onNavigateToAnalytics = onNavigateToAnalytics, onNavigateToPlanner = onNavigateToPlanner, activeIndex = 0) },
-        containerColor = mainBackground
+        bottomBar = { HomeBottomNavigationBar(onNavigateToSettings = onNavigateToSettings, onNavigateToAnalytics = onNavigateToAnalytics, onNavigateToPlanner = onNavigateToPlanner, onNavigateToSubjects = onNavigateToSubjects, activeIndex = 0) },
+
     ) { paddingValues ->
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(mainBackground)
-                .padding(paddingValues),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            if (examDetails != null) {
-                item { ExamStatusCard(details = examDetails) }
-            }
-            if (sessions != null && sessions.isNotEmpty()) {
-                item {
-                    TodayStudyPlanHeader(
-                        isSwapMode = isSwapMode,
-                        onCancelSwap = onCancelSwap,
-                        onEnterSwapMode = onEnterSwapMode,
-                        onSaveSwap = onSaveSwap
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(gradientTop, gradientBottom)
                     )
+                )
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize(),
+                contentPadding = PaddingValues(
+                    top = paddingValues.calculateTopPadding() + 16.dp,
+                    bottom = paddingValues.calculateBottomPadding() + 16.dp,
+                    start = 16.dp,
+                    end = 16.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                if (examDetails != null) {
+                    item { ExamStatusCard(details = examDetails) }
                 }
-                val firstUncompletedIndex = sessions.indexOfFirst { it.status != SessionStatus.COMPLETED }
-                itemsIndexed(sessions, key = { _, session -> session.sessionId }) { index, session ->
-                    SessionCard(
-                        session = session,
-                        isSwapMode = isSwapMode,
-                        isSourceNode = swapSourceIndex == index,
-                        isCurrent = index == firstUncompletedIndex,
+                if (sessions != null && sessions.isNotEmpty()) {
+                    item {
+                        TodayStudyPlanHeader(
+                            isSwapMode = isSwapMode,
+                            onCancelSwap = onCancelSwap,
+                            onEnterSwapMode = onEnterSwapMode,
+                            onSaveSwap = onSaveSwap
+                        )
+                    }
+                    val firstUncompletedIndex =
+                        sessions.indexOfFirst { it.status != SessionStatus.COMPLETED }
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = cardBackground),
+                            border = BorderStroke(1.dp, cardBorder),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                sessions.forEachIndexed { index, session ->
+                                    SessionCard(
+                                        session = session,
+                                        isSwapMode = isSwapMode,
+                                        isSourceNode = swapSourceIndex == index,
+                                        isCurrent = index == firstUncompletedIndex,
+                                        onClick = {
+                                            if (isSwapMode) {
+                                                onSessionClickedInSwapMode(index)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                item {
+                    StartSessionButton(
                         onClick = {
-                            if (isSwapMode) {
-                                onSessionClickedInSwapMode(index)
+                            activeSession?.let {
+                                onStartSession(
+                                    it.subject,
+                                    "EXAM",
+                                    it.durationMinutes
+                                )
                             }
                         }
                     )
                 }
-            }
-            item {
-                StartSessionButton(
-                    onClick = {
-                        activeSession?.let {
-                            onStartSession(
-                                it.subject,
-                                "EXAM",
-                                it.durationMinutes
-                            )
-                        }
-                    }
-                )
-            }
 
-            if (metrics != null) {
-                item { AccountabilityPanel(metrics = metrics) }
-            }
-            items(alerts.take(2)) { alert ->
-                AlertMessageCard(alert = alert)
-            }
-            if (studyStreak != null) {
-                item { StudyStreak(days = studyStreak) }
+                if (metrics != null) {
+                    item { AccountabilityPanel(metrics = metrics) }
+                }
+                items(alerts.take(2)) { alert ->
+                    AlertMessageCard(alert = alert)
+                }
+                if (studyStreak != null) {
+                    item { StudyStreak(days = studyStreak) }
+                }
             }
         }
     }

@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +42,9 @@ import com.example.studypilot.ui.casual.CasualTask
 import com.example.studypilot.ui.casual.CasualAlertType
 import com.example.studypilot.ui.mode.ExamModePreferences
 import java.util.Objects
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 // Main Home State
 data class HomeState(
@@ -87,21 +91,48 @@ class HomeViewModel(
     private var lastProcessedPrefsTimestamp: Long = 0L
     // Remember last session length used to generate the UI plan to detect preference changes
     private var lastUsedSessionLength: Int? = null
+    // Track last database update to prevent processExamData from overwriting fresh DB updates
+    private var lastDatabaseUpdateTime: Long = 0L
 
-    private var lastProcessedTime: Long = 0L
-    private val DEBOUNCE_DELAY_MS = 500L  // 500ms minimum between processes
+    // 🚨 SIMPLE FIX: Force refresh from database
+    fun refreshFromDatabase() {
+        android.util.Log.d("HomeViewModel", "🔄 FORCE REFRESH called")
+        viewModelScope.launch {
+            val authState = authViewModel.authState.value
+            if (authState is AuthState.Authenticated) {
+                try {
+                    // Get fresh data from database
+                    val sessions = withContext(Dispatchers.IO) {
+                        repository.getTodaySessionsForUser(authState.uid).first()
+                    }
+                    android.util.Log.d("HomeViewModel", "🔄 Force refresh got ${sessions.size} sessions from DB")
+                    updateSessionStatusesFromDatabase(sessions)
+                } catch (e: Exception) {
+                    android.util.Log.e("HomeViewModel", "Force refresh failed", e)
+                }
+            }
+        }
+    }
+
+
+    // CRITICAL: Track if we're currently saving to prevent feedback loops
+
 
     init {
+        android.util.Log.d("HomeViewModel", "🏗️ HomeViewModel CREATED - hashCode=${this.hashCode()}")
         viewModelScope.launch {
             authViewModel.authState.collectLatest { authState ->
                 if (authState is AuthState.Authenticated) {
                     _uiState.value = _uiState.value.copy(userEmail = authState.email)
 
-                    // NEW: Collect completed sessions from database and update UI
+                    // Collect today's sessions from database and update UI
                     launch {
-                        repository.getSessionsForUser(authState.uid).collectLatest { completedSessions ->
-                            updateSessionStatusesFromDatabase(completedSessions)
-                        }
+                        android.util.Log.d("HomeViewModel", "👂 Sessions Flow collector STARTED for user: ${authState.uid}")
+                        repository.getTodaySessionsForUser(authState.uid)
+                            .collectLatest { todaySessions ->
+                                android.util.Log.d("HomeViewModel", "📊 Sessions Flow EMITTED: ${todaySessions.size} sessions")
+                                updateSessionStatusesFromDatabase(todaySessions)
+                            }
                     }
 
                     userPreferencesRepository.getUserPreferences(authState.uid)
@@ -110,6 +141,7 @@ class HomeViewModel(
                                 clearData()
                                 return@collectLatest
                             }
+
 
                             // Debug: log incoming prefs from repository to detect overwrites/races
                             try {
@@ -142,8 +174,8 @@ class HomeViewModel(
 
                             when (userPreferences.selectedMode) {
                                 StudyMode.EXAM -> processExamData(userPreferences, authState.uid)
-                                StudyMode.FOCUS -> processFocusData(userPreferences)
-                                StudyMode.CASUAL -> processCasualData(userPreferences)
+                                StudyMode.FOCUS -> processFocusData(userPreferences, authState.uid)
+                                StudyMode.CASUAL -> processCasualData(userPreferences, authState.uid)
                             }
 
                             val afterTs = userPreferences.lastAccessed
@@ -161,6 +193,8 @@ class HomeViewModel(
     }
 
     private fun updateSessionStatusesFromDatabase(completedSessions: List<com.example.studypilot.data.StudySession>) {
+
+
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
 
         // Filter sessions completed today
@@ -169,31 +203,19 @@ class HomeViewModel(
             sessionDate == today && session.completed
         }
 
-        // OPTIMIZATION: Only update if count changed
-        val currentCompletedCount = when (_uiState.value.selectedMode) {
-            StudyMode.EXAM -> _uiState.value.studySessions?.count { it.status == SessionStatus.COMPLETED } ?: 0
-            StudyMode.FOCUS -> _uiState.value.focusSessions?.count { it.status == SessionStatus.COMPLETED } ?: 0
-            StudyMode.CASUAL -> _uiState.value.casualSessions?.count { it.status == CasualSessionStatus.COMPLETED } ?: 0
-        }
-
-        if (todayCompletedSessions.size == currentCompletedCount) {
-            // No new completions, skip update
-            return
-        }
-
-        android.util.Log.d("HomeViewModel", "Database sync: ${todayCompletedSessions.size} sessions completed today (was $currentCompletedCount)")
+        android.util.Log.d("HomeViewModel", "🔄 Database sync: Updating UI with ${todayCompletedSessions.size} completed sessions from database")
 
         // Launch coroutine since updateExamSessionStatuses is now suspend
         viewModelScope.launch {
             when (_uiState.value.selectedMode) {
-                StudyMode.EXAM -> updateExamSessionStatuses(todayCompletedSessions, today)
+                StudyMode.EXAM -> updateExamSessionStatuses(todayCompletedSessions, completedSessions, today)
                 StudyMode.FOCUS -> updateFocusSessionStatuses(todayCompletedSessions, today)
                 StudyMode.CASUAL -> updateCasualSessionStatuses(todayCompletedSessions, today)
             }
         }
     }
 
-    private suspend fun updateExamSessionStatuses(todayCompletedSessions: List<com.example.studypilot.data.StudySession>, today: String) {
+    private suspend fun updateExamSessionStatuses(todayCompletedSessions: List<com.example.studypilot.data.StudySession>, allCompletedSessions: List<com.example.studypilot.data.StudySession>, today: String) {
         val sessions = _uiState.value.studySessions ?: return
 
         // Create a map of subject -> completion count
@@ -233,7 +255,7 @@ class HomeViewModel(
         val pending = updatedSessions.size - completed
 
         // Calculate streak
-        val streak = calculateExamStreak(todayCompletedSessions)
+        val streak = calculateExamStreak(allCompletedSessions)
 
         val metrics = AccountabilityMetrics(
             completed = completed,
@@ -265,6 +287,16 @@ class HomeViewModel(
 
         android.util.Log.d("HomeViewModel", "Updated exam sessions: completed=$completed, pending=$pending, streak=$streak")
 
+        // Track that we just updated from database
+        val statusesChanged = updatedSessions.map { it.status } != sessions.map { it.status }
+        if (statusesChanged) {
+            // Track that we just updated from database
+            lastDatabaseUpdateTime = System.currentTimeMillis()
+            android.util.Log.d("HomeViewModel", "Database update timestamp set - session statuses changed")
+        } else {
+            android.util.Log.d("HomeViewModel", "Database sync - no status changes, not blocking processExamData")
+        }
+
         _uiState.value = _uiState.value.copy(
             studySessions = updatedSessions,
             accountabilityMetrics = metrics,
@@ -273,7 +305,7 @@ class HomeViewModel(
         )
     }
 
-    private fun updateFocusSessionStatuses(todayCompletedSessions: List<com.example.studypilot.data.StudySession>, today: String) {
+    private suspend fun updateFocusSessionStatuses(todayCompletedSessions: List<com.example.studypilot.data.StudySession>, today: String) {
         val sessions = _uiState.value.focusSessions ?: return
 
         val completionMap = todayCompletedSessions
@@ -304,12 +336,14 @@ class HomeViewModel(
         val completedCount = updatedSessions.count { it.status == SessionStatus.COMPLETED }
         val totalTime = todayCompletedSessions.sumOf { it.elapsedSeconds / 60 }
 
-        val currentStreak = _uiState.value.focusMetrics?.focusStreak ?: 0
-        val metrics = calculateFocusMetrics(updatedSessions, currentStreak)
+        val metrics = calculateFocusMetrics(updatedSessions)
 
         val alerts = generateFocusAlerts(metrics.focusStreak, metrics.pendingToday, updatedSessions.size)
 
         android.util.Log.d("HomeViewModel", "Updated focus sessions: completed=$completedCount, totalTime=${totalTime}min")
+
+        // Track that we just updated from database
+        lastDatabaseUpdateTime = System.currentTimeMillis()
 
         _uiState.value = _uiState.value.copy(
             focusSessions = updatedSessions,
@@ -318,7 +352,7 @@ class HomeViewModel(
         )
     }
 
-    private fun updateCasualSessionStatuses(todayCompletedSessions: List<com.example.studypilot.data.StudySession>, today: String) {
+    private suspend fun updateCasualSessionStatuses(todayCompletedSessions: List<com.example.studypilot.data.StudySession>, today: String) {
         val sessions = _uiState.value.casualSessions ?: return
 
         val completionMap = todayCompletedSessions
@@ -349,11 +383,23 @@ class HomeViewModel(
         val completed = updatedSessions.count { it.status == CasualSessionStatus.COMPLETED }
         val pending = updatedSessions.size - completed
 
+        val authState = authViewModel.authState.value
+        val allSessions = if (authState is AuthState.Authenticated) {
+            withContext(Dispatchers.IO) {
+                repository.getSessionsForUser(authState.uid).first()
+            }
+        } else emptyList()
+
+        val streak = calculateExamStreak(allSessions)
+
         val metrics = CasualMetrics(
             completedToday = completed,
             pendingToday = pending,
-            studyStreak = 0 // Implement streak logic if needed
+            studyStreak = streak
         )
+
+        // Track that we just updated from database
+        lastDatabaseUpdateTime = System.currentTimeMillis()
 
         _uiState.value = _uiState.value.copy(
             casualSessions = updatedSessions,
@@ -361,13 +407,116 @@ class HomeViewModel(
         )
     }
 
-    private fun calculateExamStreak(todayCompletedSessions: List<com.example.studypilot.data.StudySession>): Int {
-        // Simple streak: count consecutive days with at least 1 completed session
-        // For now, return 1 if any session completed today, else 0
-        // TODO: Implement proper multi-day streak tracking
-        return if (todayCompletedSessions.any { it.completed }) 1 else 0
+    private fun calculateExamStreak(allSessions: List<com.example.studypilot.data.StudySession>): Int {
+        if (allSessions.isEmpty()) return 0
+
+        val today = java.time.LocalDate.now()
+
+        val studyDates = allSessions
+            .filter { it.completed }
+            .map {
+                java.time.Instant.ofEpochMilli(it.timestamp)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate()
+            }
+            .distinct()
+            .sortedDescending()
+
+        if (studyDates.isEmpty()) return 0
+
+        var currentStreak = 0
+        var checkDate = today
+
+        if (studyDates.contains(today)) {
+            currentStreak = 1
+            checkDate = today.minusDays(1)
+        } else if (studyDates.contains(today.minusDays(1))) {
+            currentStreak = 1
+            checkDate = today.minusDays(2)
+        } else {
+            return 0
+        }
+
+        while (studyDates.contains(checkDate)) {
+            currentStreak++
+            checkDate = checkDate.minusDays(1)
+        }
+
+        return currentStreak
     }
 
+
+    private suspend fun calculateRedistributedExtrasForToday(
+        userId: String,
+        examDateMs: Long,
+        planStartMs: Long,
+        sessionsPerDay: Int
+    ): Int {
+        if (examDateMs <= 0L) return 0
+
+        val today = LocalDate.now()
+        val examDate = Instant.ofEpochMilli(examDateMs).atZone(ZoneId.systemDefault()).toLocalDate()
+
+        // Don't redistribute on or after exam date
+        if (!today.isBefore(examDate)) return 0
+
+        // Get all DB sessions to calculate cumulative missed
+        val allDbSessions = withContext(Dispatchers.IO) {
+            repository.getSessionsForUser(userId).first()
+        }
+
+        val sessionsByDate = allDbSessions.groupBy { session ->
+            Instant.ofEpochMilli(session.timestamp)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+        }
+
+        // Calculate cumulative missed from past days
+        var cumulativeMissed = 0
+        val planStart = if (planStartMs > 0L) {
+            Instant.ofEpochMilli(planStartMs).atZone(ZoneId.systemDefault()).toLocalDate()
+        } else {
+            today.minusMonths(1) // Fallback
+        }
+
+        var checkDate = planStart
+        while (checkDate.isBefore(today)) {
+            val dbForDay = sessionsByDate[checkDate] ?: emptyList()
+            val completedCount = dbForDay.count { it.completed }
+
+            if (completedCount < sessionsPerDay) {
+                cumulativeMissed += (sessionsPerDay - completedCount)
+            }
+
+            checkDate = checkDate.plusDays(1)
+        }
+
+        if (cumulativeMissed <= 0) return 0
+
+        // Calculate days remaining between today+1 and examDate
+        val daysRemaining = mutableListOf<LocalDate>()
+        var d = today.plusDays(1)
+        while (d.isBefore(examDate)) {
+            daysRemaining.add(d)
+            d = d.plusDays(1)
+        }
+
+        if (daysRemaining.isEmpty()) {
+            // No future days - all catch-up must happen today
+            return cumulativeMissed
+        }
+
+        // Redistribute evenly (same algorithm as PlannerViewModel)
+        val perDay = cumulativeMissed / (daysRemaining.size + 1) // +1 to include today
+        val remainder = cumulativeMissed % (daysRemaining.size + 1)
+
+        // Today gets base distribution + 1 if it's in the remainder
+        val todayExtra = perDay + if (0 < remainder) 1 else 0
+
+        android.util.Log.d("HomeViewModel", "Redistribution: missed=$cumulativeMissed, daysRemaining=${daysRemaining.size}, todayExtra=$todayExtra")
+
+        return todayExtra
+    }
 
 
 
@@ -442,10 +591,25 @@ class HomeViewModel(
     private var lastProcessedPrefsHash: Int = 0
 
     private suspend fun processExamData(userPreferences: UserPreferences, userId: String, cachedSubjects: List<Subject>? = null) {
+        // CRITICAL: If database just updated sessions (within last 2 seconds), skip this
+        // to prevent overwriting fresh completion status
+        val timeSinceLastDbUpdate = System.currentTimeMillis() - lastDatabaseUpdateTime
+        val currentSubjects = _uiState.value.examDetails?.subjects
+        val incomingSubjects = cachedSubjects ?: userPreferences.examSubjects
+        val subjectsChanged = currentSubjects != incomingSubjects
+
+        if (timeSinceLastDbUpdate < 2000 && _uiState.value.studySessions != null && !subjectsChanged) {
+            android.util.Log.d("HomeViewModel", "Skipping processExamData - database updated ${timeSinceLastDbUpdate}ms ago and subjects unchanged")
+            return
+        }
+
+        if (subjectsChanged) {
+            android.util.Log.d("HomeViewModel", "Processing exam data - subjects changed from $currentSubjects to $incomingSubjects")
+        }
+
         // Create a hash of the key preferences to detect actual changes
         _uiState.value = _uiState.value.copy(selectedMode = StudyMode.EXAM)
 
-        // ADD BACK THIS SECTION - it was missing!
         val rawExamMillis = userPreferences.examDate ?: 0L
         // Defensive normalization: some callers may have saved seconds instead of milliseconds. If the value looks like seconds (< 1e12), convert to ms.
         val examMillis = when {
@@ -556,16 +720,33 @@ class HomeViewModel(
             rawSessionLengthMinutes = examPrefs.sessionLength.minutes
         )
 
+        val redistributedExtras = withContext(Dispatchers.IO) {
+            calculateRedistributedExtrasForToday(
+                userId = userId,
+                examDateMs = examMillis,
+                planStartMs = userPreferences.planStartDate ?: 0L,
+                sessionsPerDay = normalized.totalSessions
+            )
+        }
+
+        val totalSessionsWithCatchup = normalized.totalSessions + redistributedExtras
+
         android.util.Log.d(
             "HomeViewModel",
             "Normalized exam inputs: dailyMinutes=${normalized.dailyMinutes}, sessionLength=${normalized.sessionLengthMinutes}, totalSessions=${normalized.totalSessions}"
         )
 
-        // If a saved daily plan exists for today, VALIDATE it before accepting.
-        // Accept a saved plan only when:
-        //  - every session has a non-blank subject name AND that subject exists in the current sanitized `safeSubjects` list
-        //  - the saved plan's session count equals the normalized total sessions for today
-        // Otherwise regenerate using the current `safeSubjects` (so user-entered subjects are respected).
+        // CRITICAL FIX: Always load from database first to get completion status
+        val dbSessionsToday = withContext(Dispatchers.IO) {
+            repository.getTodaySessionsForUser(userId).firstOrNull()
+                ?.filter { it.modeName == "EXAM" } ?: emptyList()
+        }
+
+        // Build completion map from database
+        val completionMap = dbSessionsToday
+            .groupBy { it.subjectName }
+            .mapValues { it.value.size }
+
         var shouldPersistPlan = false
         val sessions = if (userPreferences.dailyPlanDate == today && userPreferences.dailyPlan.isNotEmpty()) {
             // Trim and normalize saved sessions defensively
@@ -576,31 +757,68 @@ class HomeViewModel(
             val validSubjectNames = safeSubjects.map { it.name }.toSet()
 
             // Validate: Saved session subjects must be non-blank and exist in savedSubjects
+            // Validate: Saved session subjects must be non-blank and exist in savedSubjects
             val allSubjectsValid = sanitizedSaved.all { it.subject.isNotBlank() && it.subject in validSubjectNames }
-            val matchingCounts = sanitizedSaved.size == normalized.totalSessions
-            // Also ensure saved session durations match the current normalized session length
-            val durationsMatch = sanitizedSaved.all { it.durationMinutes == normalized.sessionLengthMinutes }
+            val matchingCounts = sanitizedSaved.size == totalSessionsWithCatchup  // Use total with catchup
 
-            if (allSubjectsValid && matchingCounts && durationsMatch) {
-                // saved plan is consistent with current exam subjects, expected count, and session length — accept it
-                android.util.Log.d("HomeViewModel", "Accepting saved daily plan durations=${sanitizedSaved.map { it.durationMinutes }}")
-                sanitizedSaved
+// CRITICAL: Reject plans with "General Study" when we have real subjects
+            val hasGeneralStudy = sanitizedSaved.any { it.subject.trim().equals("General Study", ignoreCase = true) }
+            val hasRealSubjects = safeSubjects.any { !it.name.trim().equals("General Study", ignoreCase = true) }
+            val isPlanStale = hasGeneralStudy && hasRealSubjects
+
+            if (allSubjectsValid && matchingCounts && !isPlanStale) {
+                // CRITICAL FIX: Apply database completion status to saved plan
+                val subjectCompletionTracker = mutableMapOf<String, Int>()
+                var foundCurrent = false
+
+                val updatedSessions = sanitizedSaved.map { s ->
+                    val subjectName = s.subject
+                    val timesCompleted = completionMap.getOrDefault(subjectName, 0)
+                    val currentCount = subjectCompletionTracker.getOrDefault(subjectName, 0)
+
+                    val status = when {
+                        currentCount < timesCompleted -> {
+                            subjectCompletionTracker[subjectName] = currentCount + 1
+                            SessionStatus.COMPLETED
+                        }
+                        !foundCurrent -> {
+                            foundCurrent = true
+                            SessionStatus.CURRENT
+                        }
+                        else -> SessionStatus.UPCOMING
+                    }
+
+                    s.copy(
+                        durationMinutes = normalized.sessionLengthMinutes,
+                        status = status
+                    )
+                }
+
+                // Only persist if durations changed (not if just status synced from DB)
+                val needsDurationUpdate = sanitizedSaved.any { it.durationMinutes != normalized.sessionLengthMinutes }
+                if (needsDurationUpdate) {
+                    shouldPersistPlan = true
+                    android.util.Log.d("HomeViewModel", "Updating saved plan with new session length: ${normalized.sessionLengthMinutes}")
+                } else {
+                    android.util.Log.d("HomeViewModel", "Accepting saved daily plan with DB sync - NO PERSIST")
+                }
+
+                updatedSessions
             } else {
                 // saved plan is stale/invalid — regenerate from current saved subjects and persist the regenerated plan
-                android.util.Log.d("HomeViewModel", "Rejecting saved daily plan: allSubjectsValid=$allSubjectsValid, matchingCounts=$matchingCounts, durationsMatch=$durationsMatch; regenerating plan using examPrefs sessionLength=${normalized.sessionLengthMinutes}")
+                android.util.Log.d("HomeViewModel", "Rejecting saved daily plan: allSubjectsValid=$allSubjectsValid, matchingCounts=$matchingCounts; regenerating plan")
                 shouldPersistPlan = true
-                // Run CPU work (allocation & ordering) off the main thread
                 withContext(Dispatchers.Default) {
-                    generateStudySessions(safeSubjects, normalized.totalSessions, normalized.sessionLengthMinutes)
+                    generateStudySessions(safeSubjects, totalSessionsWithCatchup, normalized.sessionLengthMinutes, normalized.totalSessions, completionMap)
                 }
             }
         } else {
             // No saved plan for today — generate fresh from saved subjects
             shouldPersistPlan = true
             val gen = withContext(Dispatchers.Default) {
-                generateStudySessions(safeSubjects, normalized.totalSessions, normalized.sessionLengthMinutes)
+                generateStudySessions(safeSubjects, totalSessionsWithCatchup, normalized.sessionLengthMinutes, baseSessions = normalized.totalSessions, completionMap = completionMap)
             }
-            android.util.Log.d("HomeViewModel", "Generated new daily plan durations=${gen.map { it.durationMinutes }} (from examPrefs sessionLength=${normalized.sessionLengthMinutes})")
+            android.util.Log.d("HomeViewModel", "Generated new daily plan durations=${gen.map { it.durationMinutes }}")
             gen
         }
 
@@ -620,10 +838,10 @@ class HomeViewModel(
             studyStreak = 0 // keep existing behavior for streak if needed
         )
 
-        // Persist regenerated plan when we created a new plan (either because none existed, or saved plan was invalid)
+        // CRITICAL: Only persist when we created a new plan or updated session length
         if (shouldPersistPlan) {
-            // Persist regenerated plan on IO dispatcher
             saveDailyPlan(sessions)
+            android.util.Log.d("HomeViewModel", "Persisted exam plan to preferences only")
         }
 
         // Record the session length used so future emissions with stale durations are rejected
@@ -686,107 +904,43 @@ class HomeViewModel(
     private fun generateStudySessions(
         subjects: List<Subject>,
         totalSessions: Int,
-        sessionLength: Int
+        sessionLength: Int,
+        baseSessions: Int = totalSessions,
+        completionMap: Map<String, Int> = emptyMap()
     ): List<StudySession> {
-
-        // Ensure sessionLength >= 1 and at least 1 session
-        val sessionLengthSafe = max(1, sessionLength)
-        val safeTotalSessions = totalSessions.coerceAtLeast(1)
-
-        // Use passed-in subjects as authoritative. Caller (HomeViewModel) ensures fallback when the saved list is empty.
-        val safeSubjects = subjects
-
-        // Explicit numeric weight maps (do NOT rely on enum ordinal)
-        val difficultyWeights = mapOf(
-            Difficulty.Hard to 3,
-            Difficulty.Medium to 2,
-            Difficulty.Easy to 1
-        )
-        val priorityWeights = mapOf(
-            Priority.High to 4,
-            Priority.Medium to 2,
-            Priority.Low to 1
+        // Use shared generator
+        val subjectOrder = com.example.studypilot.utils.SessionGenerator.generateExamSessionOrder(
+            subjects, totalSessions
         )
 
-        // Compute combined weight = difficultyWeight * priorityWeight
-        val subjectWeights = safeSubjects.associateWith { subj ->
-            val dW = difficultyWeights[subj.difficulty] ?: 1
-            val pW = priorityWeights[subj.priority] ?: 1
-            val w = dW * pW
-            if (w <= 0) 1 else w
-        }
+        // Track completions to assign correct status
+        val subjectCompletionTracker = mutableMapOf<String, Int>()
+        var foundCurrent = false
 
-        // Allocate sessions: ensure each subject appears at least once when possible
-        val sessionsPerSubject = mutableMapOf<Subject, Int>()
+        return subjectOrder.mapIndexed { index, subjectName ->
+            val timesCompleted = completionMap.getOrDefault(subjectName, 0)
+            val currentCount = subjectCompletionTracker.getOrDefault(subjectName, 0)
 
-        if (safeTotalSessions >= safeSubjects.size) {
-            // give one slot to each subject first
-            safeSubjects.forEach { sessionsPerSubject[it] = 1 }
-            var remaining = safeTotalSessions - safeSubjects.size
-
-            // Distribute remaining deterministically by weight (highest weight first round-robin)
-            val sortedByWeight = safeSubjects.sortedByDescending { subjectWeights[it] ?: 1 }
-            var idx = 0
-            while (remaining > 0) {
-                val subj = sortedByWeight[idx % sortedByWeight.size]
-                sessionsPerSubject[subj] = sessionsPerSubject.getOrDefault(subj, 0) + 1
-                remaining--
-                idx++
+            val status = when {
+                currentCount < timesCompleted -> {
+                    subjectCompletionTracker[subjectName] = currentCount + 1
+                    SessionStatus.COMPLETED
+                }
+                !foundCurrent -> {
+                    foundCurrent = true
+                    SessionStatus.CURRENT
+                }
+                else -> SessionStatus.UPCOMING
             }
-        } else {
-            // fewer sessions than subjects: pick top-N subjects by weight
-            val topSubjects = safeSubjects.sortedByDescending { subjectWeights[it] ?: 1 }.take(safeTotalSessions)
-            topSubjects.forEach { sessionsPerSubject[it] = 1 }
-        }
 
-        // Build the raw subject list according to allocation
-        val rawSubjects = mutableListOf<Subject>()
-        // Iterate subjects in descending weight order so higher-weight subjects appear earlier in the final list
-        val subjectsSortedForOrder = safeSubjects.sortedByDescending { subjectWeights[it] ?: 1 }
-        subjectsSortedForOrder.forEach { subj ->
-            val count = sessionsPerSubject.getOrDefault(subj, 0)
-            repeat(count) { rawSubjects.add(subj) }
-        }
-
-        // Defensive: if allocation failed and there are no saved subjects, fall back to General Study
-        if (rawSubjects.isEmpty()) {
-            if (safeSubjects.isEmpty()) rawSubjects.add(Subject("General Study", Priority.Low, Difficulty.Medium))
-            else rawSubjects.add(safeSubjects.first())
-        }
-
-        // Apply consecutive-subject limiting
-        val limitedSubjects = limitConsecutiveSubjects(rawSubjects)
-
-        // Ensure we have exactly safeTotalSessions items: if limited reduced or increased, adjust deterministically
-        val finalSubjects = mutableListOf<Subject>()
-        var pointer = 0
-        while (finalSubjects.size < safeTotalSessions) {
-            finalSubjects.add(limitedSubjects[pointer % limitedSubjects.size])
-            pointer++
-        }
-
-        // Map to StudySession ensuring non-empty subject names (respect user-entered names)
-        val resulting = finalSubjects.mapIndexed { index, subject ->
             StudySession(
                 sessionNumber = index + 1,
-                subject = subject.name,
-                durationMinutes = sessionLengthSafe,
-                status = SessionStatus.UPCOMING
+                subject = subjectName,
+                durationMinutes = sessionLength,
+                status = status,
+                isRedistributed = index >= baseSessions  // Mark catch-up sessions
             )
         }
-
-        if (resulting.isEmpty()) {
-            return listOf(
-                StudySession(
-                    sessionNumber = 1,
-                    subject = "General Study",
-                    durationMinutes = sessionLengthSafe,
-                    status = SessionStatus.UPCOMING
-                )
-            )
-        }
-
-        return resulting
     }
 
 
@@ -795,20 +949,31 @@ class HomeViewModel(
         viewModelScope.launch {
             val authState = authViewModel.authState.first()
             if (authState is AuthState.Authenticated) {
+                // Set flag to prevent feedback loop
+
+
                 withContext(Dispatchers.IO) {
                     val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
                     if (currentPrefs != null) {
                         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
-                        val updatedPrefs = currentPrefs.copy(
-                            dailyPlan = sessions,
-                            dailyPlanDate = today,
-                            lastAccessed = System.currentTimeMillis() // Force timestamp update
-                        )
-                        userPreferencesRepository.saveUserPreferences(updatedPrefs)
 
-                        android.util.Log.d("HomeViewModel", "Saved dailyPlan with ${sessions.size} sessions, durations=${sessions.map { it.durationMinutes }}")
+                        // CRITICAL FIX: Only save if not already saved for today OR if content changed
+                        if (currentPrefs.dailyPlanDate != today || currentPrefs.dailyPlan.size != sessions.size) {
+                            val updatedPrefs = currentPrefs.copy(
+                                dailyPlan = sessions,
+                                dailyPlanDate = today
+                            )
+                            userPreferencesRepository.saveUserPreferences(updatedPrefs)
+                            android.util.Log.d("HomeViewModel", "Saved dailyPlan with ${sessions.size} sessions")
+                        } else {
+                            android.util.Log.d("HomeViewModel", "Skipped saving exam plan - already saved for today")
+                        }
                     }
                 }
+
+
+
+
             }
         }
     }
@@ -819,28 +984,35 @@ class HomeViewModel(
         viewModelScope.launch {
             val authState = authViewModel.authState.first()
             if (authState is AuthState.Authenticated) {
+                // Set flag to prevent feedback loop
+
                 withContext(Dispatchers.IO) {
                     val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
                     if (currentPrefs != null) {
                         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
-                        // Convert FocusSession to a saveable format
-                        val sessionData = sessions.map {
-                            StudySession(
-                                sessionNumber = it.sessionNumber,
-                                subject = it.subjectName,
-                                durationMinutes = it.duration,
-                                status = it.status
+
+                        // CRITICAL FIX: Only save if not already saved for today OR if content changed
+                        if (currentPrefs.focusPlanDate != today || currentPrefs.focusDailyPlan.size != sessions.size) {
+                            val sessionData = sessions.map {
+                                StudySession(
+                                    sessionNumber = it.sessionNumber,
+                                    subject = it.subjectName,
+                                    durationMinutes = it.duration,
+                                    status = it.status
+                                )
+                            }
+                            val updatedPrefs = currentPrefs.copy(
+                                focusDailyPlan = sessionData,
+                                focusPlanDate = today
                             )
+                            userPreferencesRepository.saveUserPreferences(updatedPrefs)
+                            android.util.Log.d("HomeViewModel", "Saved focus dailyPlan")
+                        } else {
+                            android.util.Log.d("HomeViewModel", "Skipped saving focus plan - already saved for today")
                         }
-                        val updatedPrefs = currentPrefs.copy(
-                            focusDailyPlan = sessionData,
-                            focusPlanDate = today,
-                            lastAccessed = System.currentTimeMillis()
-                        )
-                        userPreferencesRepository.saveUserPreferences(updatedPrefs)
-                        android.util.Log.d("HomeViewModel", "Saved focus dailyPlan")
                     }
                 }
+
             }
         }
     }
@@ -849,30 +1021,36 @@ class HomeViewModel(
         viewModelScope.launch {
             val authState = authViewModel.authState.first()
             if (authState is AuthState.Authenticated) {
+                // Set flag to prevent feedback loop
+
                 withContext(Dispatchers.IO) {
                     val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
                     if (currentPrefs != null) {
                         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
-                        // Convert CasualSession to saveable format
-                        val sessionData = sessions.map { session ->
-                            StudySession(
-                                sessionNumber = session.sessionNumber,
-                                subject = session.subjectName,
-                                durationMinutes = session.duration,
-                                status = when(session.status) {
-                                    CasualSessionStatus.COMPLETED -> SessionStatus.COMPLETED
-                                    CasualSessionStatus.CURRENT -> SessionStatus.CURRENT
-                                    CasualSessionStatus.UPCOMING -> SessionStatus.UPCOMING
-                                }
+
+                        // CRITICAL FIX: Only save if not already saved for today OR if content changed
+                        if (currentPrefs.casualPlanDate != today || currentPrefs.casualDailyPlan.size != sessions.size) {
+                            val sessionData = sessions.map { session ->
+                                StudySession(
+                                    sessionNumber = session.sessionNumber,
+                                    subject = session.subjectName,
+                                    durationMinutes = session.duration,
+                                    status = when(session.status) {
+                                        CasualSessionStatus.COMPLETED -> SessionStatus.COMPLETED
+                                        CasualSessionStatus.CURRENT -> SessionStatus.CURRENT
+                                        CasualSessionStatus.UPCOMING -> SessionStatus.UPCOMING
+                                    }
+                                )
+                            }
+                            val updatedPrefs = currentPrefs.copy(
+                                casualDailyPlan = sessionData,
+                                casualPlanDate = today
                             )
+                            userPreferencesRepository.saveUserPreferences(updatedPrefs)
+                            android.util.Log.d("HomeViewModel", "Saved casual dailyPlan")
+                        } else {
+                            android.util.Log.d("HomeViewModel", "Skipped saving casual plan - already saved for today")
                         }
-                        val updatedPrefs = currentPrefs.copy(
-                            casualDailyPlan = sessionData,
-                            casualPlanDate = today,
-                            lastAccessed = System.currentTimeMillis()
-                        )
-                        userPreferencesRepository.saveUserPreferences(updatedPrefs)
-                        android.util.Log.d("HomeViewModel", "Saved casual dailyPlan")
                     }
                 }
             }
@@ -880,7 +1058,23 @@ class HomeViewModel(
     }
 
     // region Focus Mode Logic
-    private fun processFocusData(userPreferences: UserPreferences) {
+    private suspend fun processFocusData(userPreferences: UserPreferences, userId: String) {
+        // CRITICAL: If database just updated sessions (within last 2 seconds), skip this
+        // to prevent overwriting fresh completion status
+        val timeSinceLastDbUpdate = System.currentTimeMillis() - lastDatabaseUpdateTime
+        val currentSubjects = _uiState.value.focusDetails?.subjects
+        val incomingSubjects = userPreferences.focusSubjects
+        val subjectsChanged = currentSubjects != incomingSubjects
+
+        if (timeSinceLastDbUpdate < 2000 && _uiState.value.focusSessions != null && !subjectsChanged) {
+            android.util.Log.d("HomeViewModel", "Skipping processFocusData - database updated ${timeSinceLastDbUpdate}ms ago and subjects unchanged")
+            return
+        }
+
+        if (subjectsChanged) {
+            android.util.Log.d("HomeViewModel", "Processing focus data - subjects changed")
+        }
+
         android.util.Log.d("HomeViewModel", "Processing FOCUS mode with prefs=${userPreferences.focusPreferences}")
         _uiState.value = _uiState.value.copy(selectedMode = StudyMode.FOCUS)
 
@@ -895,33 +1089,124 @@ class HomeViewModel(
             notificationsEnabled = userPreferences.focusPreferences.notificationPreferences.isNotEmpty()
         )
 
-        // CRITICAL FIX: Only generate sessions when subjects exist
+        // FIRST: Check database for today's focus sessions
+        val dbSessionsToday = withContext(Dispatchers.IO) {
+            repository.getTodaySessionsForUser(userId).firstOrNull()?.filter { it.modeName == "FOCUS" } ?: emptyList()
+        }
+
+        // Build completion map from database
+        val completionMap = dbSessionsToday
+            .groupBy { it.subjectName }
+            .mapValues { it.value.size }
+
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
+        val normalized = normalizeDailyInputs(
+            rawDailyStudyHours = focusDetails.dailyStudyHours,
+            rawSessionLengthMinutes = focusDetails.preferredSessionLength
+        )
+
+        var shouldPersistPlan = false
         val sessions = if (userPreferences.focusSubjects.isNotEmpty()) {
-            generateFocusSessions(focusDetails)
+            // Check for saved plan first
+            if (userPreferences.focusPlanDate == today && userPreferences.focusDailyPlan.isNotEmpty()) {
+                val sanitizedSaved = userPreferences.focusDailyPlan.map { s ->
+                    s.copy(subject = s.subject.trim(), durationMinutes = max(1, s.durationMinutes))
+                }
+
+                val validSubjectNames = focusDetails.subjects.map { it.name }.toSet()
+                val allSubjectsValid = sanitizedSaved.all { it.subject.isNotBlank() && it.subject in validSubjectNames }
+                val matchingCounts = sanitizedSaved.size == normalized.totalSessions
+
+                if (allSubjectsValid && matchingCounts) {
+                    // CRITICAL FIX: Apply database completion status to saved plan
+                    val subjectCompletionTracker = mutableMapOf<String, Int>()
+                    var foundCurrent = false
+
+                    val updatedSessions = sanitizedSaved.mapIndexed { index, s ->
+                        val subject = focusDetails.subjects.find { it.name == s.subject }
+                        val difficultyWeights = mapOf(Difficulty.Hard to 3, Difficulty.Medium to 2, Difficulty.Easy to 1)
+                        val priorityWeights = mapOf(Priority.High to 3, Priority.Medium to 2, Priority.Low to 1)
+                        val cognitiveScore = (difficultyWeights[subject?.difficulty] ?: 1) *
+                                (priorityWeights[subject?.priority] ?: 1)
+
+                        // Determine status based on DB completions
+                        val subjectName = s.subject
+                        val timesCompleted = completionMap.getOrDefault(subjectName, 0)
+                        val currentCount = subjectCompletionTracker.getOrDefault(subjectName, 0)
+
+                        val status = when {
+                            currentCount < timesCompleted -> {
+                                subjectCompletionTracker[subjectName] = currentCount + 1
+                                SessionStatus.COMPLETED
+                            }
+                            !foundCurrent -> {
+                                foundCurrent = true
+                                SessionStatus.CURRENT
+                            }
+                            else -> SessionStatus.UPCOMING
+                        }
+
+                        FocusSession(
+                            sessionNumber = index + 1,
+                            subjectName = s.subject,
+                            duration = normalized.sessionLengthMinutes,
+                            cognitiveLoadScore = cognitiveScore,
+                            status = status
+                        )
+                    }
+
+                    // CRITICAL: Only persist if session length actually changed
+                    if (sanitizedSaved.any { it.durationMinutes != normalized.sessionLengthMinutes }) {
+                        shouldPersistPlan = true
+                        android.util.Log.d("HomeViewModel", "Updating focus plan with new session length")
+                    } else {
+                        // Don't persist - just use the loaded plan with updated statuses
+                        android.util.Log.d("HomeViewModel", "Accepting saved focus plan with DB sync - NO PERSIST")
+                    }
+
+                    updatedSessions
+                } else {
+                    // Regenerate
+                    shouldPersistPlan = true
+                    android.util.Log.d("HomeViewModel", "Regenerating focus plan")
+                    generateFocusSessions(focusDetails, completionMap)
+                }
+            } else {
+                // No saved plan — generate new
+                shouldPersistPlan = true
+                generateFocusSessions(focusDetails, completionMap)
+            }
         } else {
-            // NO SUBJECTS - Clear any saved plan and return empty list (will show empty card in UI)
-            viewModelScope.launch {
-                val authState = authViewModel.authState.first()
-                if (authState is AuthState.Authenticated) {
-                    withContext(Dispatchers.IO) {
-                        val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
-                        if (currentPrefs != null && currentPrefs.focusDailyPlan.isNotEmpty()) {
-                            // Clear the saved plan
-                            val updatedPrefs = currentPrefs.copy(
-                                focusDailyPlan = emptyList(),
-                                focusPlanDate = "",
-                                lastAccessed = System.currentTimeMillis()
-                            )
-                            userPreferencesRepository.saveUserPreferences(updatedPrefs)
-                            android.util.Log.d("HomeViewModel", "Cleared stale focus daily plan")
+            // No subjects - clear plan only if there's actually a plan to clear
+            if (userPreferences.focusDailyPlan.isNotEmpty()) {
+                viewModelScope.launch {
+                    val authState = authViewModel.authState.first()
+                    if (authState is AuthState.Authenticated) {
+                        withContext(Dispatchers.IO) {
+                            val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
+                            if (currentPrefs != null && currentPrefs.focusDailyPlan.isNotEmpty()) {
+                                val updatedPrefs = currentPrefs.copy(
+                                    focusDailyPlan = emptyList(),
+                                    focusPlanDate = "",
+                                    lastAccessed = System.currentTimeMillis()
+                                )
+                                userPreferencesRepository.saveUserPreferences(updatedPrefs)
+                                android.util.Log.d("HomeViewModel", "Cleared stale focus daily plan")
+                            }
                         }
                     }
                 }
             }
-            emptyList() // Empty list triggers the EmptySessionsCard in HomeScreenFocus UI
+            emptyList()
         }
 
-        val metrics = calculateFocusMetrics(sessions, _uiState.value.focusMetrics?.focusStreak ?: 0)
+        // CRITICAL: Only persist to DB if we're actually creating/updating a plan
+        if (shouldPersistPlan && sessions.isNotEmpty()) {
+            saveFocusDailyPlan(sessions)
+            android.util.Log.d("HomeViewModel", "Persisted focus plan to preferences only")
+        }
+
+        val metrics = calculateFocusMetrics(sessions)
         val alerts = generateFocusAlerts(metrics.focusStreak, metrics.pendingToday, sessions.size)
 
         _uiState.value = _uiState.value.copy(
@@ -932,9 +1217,7 @@ class HomeViewModel(
         )
     }
 
-
-    private fun generateFocusSessions(focusDetails: FocusDetails): List<FocusSession> {
-        // Use shared normalizer — no independent math here
+    private fun generateFocusSessions(focusDetails: FocusDetails, completionMap: Map<String, Int> = emptyMap()): List<FocusSession> {
         val normalized = normalizeDailyInputs(
             rawDailyStudyHours = focusDetails.dailyStudyHours,
             rawSessionLengthMinutes = focusDetails.preferredSessionLength
@@ -943,92 +1226,64 @@ class HomeViewModel(
         val sessionLength = normalized.sessionLengthMinutes
         val totalSessions = normalized.totalSessions
 
-        // CHANGE: Return empty list if no subjects (don't create fallback)
-        val safeSubjects = focusDetails.subjects
-        if (safeSubjects.isEmpty()) {
-            return emptyList()
-        }
+        if (focusDetails.subjects.isEmpty()) return emptyList()
 
-        // Use explicit weight maps for sorting/priority (do not rely on enum ordinals)
-        val difficultyWeights = mapOf(Difficulty.Hard to 3, Difficulty.Medium to 2, Difficulty.Easy to 1)
-        val priorityWeights = mapOf(Priority.High to 3, Priority.Medium to 2, Priority.Low to 1)
+        // Use shared generator
+        val subjectOrder = com.example.studypilot.utils.SessionGenerator.generateFocusSessionOrder(
+            focusDetails.subjects, totalSessions
+        )
 
-        val subjectWeights = safeSubjects.associateWith { subj ->
-            (difficultyWeights[subj.difficulty] ?: 1) * (priorityWeights[subj.priority] ?: 1)
-        }
+        // Track completions to assign correct status
+        val subjectCompletionTracker = mutableMapOf<String, Int>()
+        var foundCurrent = false
 
-        // Guarantee each subject appears at least once when possible
-        val sessionsPerSubject = mutableMapOf<FocusSubject, Int>()
-        safeSubjects.forEach { sessionsPerSubject[it] = 1 }
+        return subjectOrder.mapIndexed { index, subjectName ->
+            val subject = focusDetails.subjects.find { it.name == subjectName }
+            val difficultyWeights = mapOf(Difficulty.Hard to 3, Difficulty.Medium to 2, Difficulty.Easy to 1)
+            val priorityWeights = mapOf(Priority.High to 3, Priority.Medium to 2, Priority.Low to 1)
+            val cognitiveScore = (difficultyWeights[subject?.difficulty] ?: 1) *
+                    (priorityWeights[subject?.priority] ?: 1)
 
-        var remainingSessions = totalSessions - safeSubjects.size
+            val timesCompleted = completionMap.getOrDefault(subjectName, 0)
+            val currentCount = subjectCompletionTracker.getOrDefault(subjectName, 0)
 
-        if (remainingSessions > 0 && subjectWeights.values.sum() > 0) {
-            val sortedByWeight = safeSubjects.sortedByDescending { subjectWeights[it] ?: 1 }
-            var idx = 0
-            while (remainingSessions > 0) {
-                val subject = sortedByWeight[idx % sortedByWeight.size]
-                sessionsPerSubject[subject] = sessionsPerSubject.getOrDefault(subject, 0) + 1
-                remainingSessions--
-                idx++
+            val status = when {
+                currentCount < timesCompleted -> {
+                    subjectCompletionTracker[subjectName] = currentCount + 1
+                    SessionStatus.COMPLETED
+                }
+                !foundCurrent -> {
+                    foundCurrent = true
+                    SessionStatus.CURRENT
+                }
+                else -> SessionStatus.UPCOMING
             }
-        } else if (remainingSessions > 0) {
-            // fallback even distribution
-            val pool = safeSubjects
-            var idx = 0
-            while (remainingSessions > 0) {
-                val subject = pool[idx % pool.size]
-                sessionsPerSubject[subject] = sessionsPerSubject.getOrDefault(subject, 0) + 1
-                remainingSessions--
-                idx++
-            }
-        }
 
-        val allSessions: MutableList<FocusSubject> = mutableListOf()
-        sessionsPerSubject.forEach { (subject, count) -> repeat(count) { allSessions.add(subject) } }
-
-        if (allSessions.isEmpty()) return emptyList() // CHANGE: Return empty instead of fallback
-
-        // Sort subjects by explicit numeric weight (do not rely on enum ordinal)
-        allSessions.sortWith(compareByDescending<FocusSubject> { subjectWeights[it] ?: 0 }.thenBy { priorityWeights[it.priority] ?: 0 })
-
-        val balancedSubjects = limitConsecutiveSubjects(allSessions.map { Subject(it.name, it.priority, it.difficulty) })
-
-        val finalSubjects = balancedSubjects.mapNotNull { subj -> safeSubjects.find { it.name == subj.name } }.toMutableList()
-        if (finalSubjects.isEmpty()) return emptyList() // CHANGE: Return empty instead of fallback
-
-        // Build final FocusSession list: ensure at least 1 session and exactly totalSessions
-        val result = mutableListOf<FocusSession>()
-        var pointer = 0
-        while (result.size < max(1, totalSessions)) {
-            val subj = finalSubjects[pointer % finalSubjects.size]
-            result.add(
-                FocusSession(
-                    sessionNumber = result.size + 1,
-                    subjectName = subj.name,
-                    duration = sessionLength,
-                    cognitiveLoadScore = (difficultyWeights[subj.difficulty] ?: 1) * (priorityWeights[subj.priority] ?: 1),
-                    status = if (result.isEmpty()) SessionStatus.CURRENT else SessionStatus.UPCOMING
-                )
+            FocusSession(
+                sessionNumber = index + 1,
+                subjectName = subjectName,
+                duration = sessionLength,
+                cognitiveLoadScore = cognitiveScore,
+                status = status
             )
-            pointer++
         }
-
-        return result
     }
 
-    private fun calculateFocusMetrics(sessions: List<FocusSession>, currentStreak: Int): FocusMetrics {
+    private suspend fun calculateFocusMetrics(sessions: List<FocusSession>): FocusMetrics {
         val completedCount = sessions.count { it.status == SessionStatus.COMPLETED }
         val pendingCount = sessions.size - completedCount
 
-        val seventyPercent = (sessions.size * 0.7).roundToInt()
-        val deepSessionCompleted = sessions.any { it.status == SessionStatus.COMPLETED && it.cognitiveLoadScore >= 6 }
-        val taskCompleted = true // placeholder for future task-based logic
+        // Get ALL sessions from DB to calculate proper streak
+        val authState = authViewModel.authState.value
+        val allSessions = if (authState is AuthState.Authenticated) {
+            withContext(Dispatchers.IO) {
+                repository.getSessionsForUser(authState.uid).first()
+            }
+        } else emptyList()
 
-        // Do NOT reset the streak automatically here. Only increment when success criteria met.
-        val newStreak = if (completedCount >= seventyPercent || (deepSessionCompleted && taskCompleted)) currentStreak + 1 else currentStreak
+        val streak = calculateExamStreak(allSessions) // Reuse the same logic
 
-        return FocusMetrics(completedToday = completedCount, pendingToday = pendingCount, focusStreak = newStreak)
+        return FocusMetrics(completedToday = completedCount, pendingToday = pendingCount, focusStreak = streak)
     }
 
     private fun generateFocusAlerts(streak: Int, pendingCount: Int, totalSessions: Int): List<FocusAlert> {
@@ -1070,8 +1325,24 @@ class HomeViewModel(
     // endregion
 
     // region Casual Mode Logic
-    private fun processCasualData(userPreferences: UserPreferences) {
+    private fun processCasualData(userPreferences: UserPreferences, userId: String) {
         viewModelScope.launch {
+            // CRITICAL: If database just updated sessions (within last 2 seconds), skip this
+            // to prevent overwriting fresh completion status
+            val timeSinceLastDbUpdate = System.currentTimeMillis() - lastDatabaseUpdateTime
+            val currentSubjects = _uiState.value.casualDetails?.tasks?.map { it.name }
+            val incomingSubjects = userPreferences.casualSubjects.map { it.name }
+            val subjectsChanged = currentSubjects != incomingSubjects
+
+            if (timeSinceLastDbUpdate < 2000 && _uiState.value.casualSessions != null && !subjectsChanged) {
+                android.util.Log.d("HomeViewModel", "Skipping processCasualData - database updated ${timeSinceLastDbUpdate}ms ago and subjects unchanged")
+                return@launch
+            }
+
+            if (subjectsChanged) {
+                android.util.Log.d("HomeViewModel", "Processing casual data - subjects changed")
+            }
+
             android.util.Log.d("HomeViewModel", "Processing CASUAL mode")
             android.util.Log.d("HomeViewModel", "Casual subjects: ${userPreferences.casualSubjects}")
             _uiState.value = _uiState.value.copy(selectedMode = StudyMode.CASUAL)
@@ -1079,53 +1350,121 @@ class HomeViewModel(
             val casualTasks = userPreferences.casualTasks
             val casualDetails = CasualDetails(tasks = casualTasks)
 
-            // ONLY GENERATE SESSIONS IF SUBJECTS EXIST
+            // Check database first
+            val dbSessionsToday = withContext(Dispatchers.IO) {
+                repository.getTodaySessionsForUser(userId).firstOrNull()?.filter { it.modeName == "CASUAL" } ?: emptyList()
+            }
+
+            // Build completion map from database
+            val completionMap = dbSessionsToday
+                .groupBy { it.subjectName }
+                .mapValues { it.value.size }
+
+            val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
+            val normalized = normalizeDailyInputs(
+                rawDailyStudyHours = userPreferences.casualPreferences.dailyStudyHours,
+                rawSessionLengthMinutes = userPreferences.casualPreferences.sessionLength.minutes
+            )
+
+            var shouldPersistPlan = false
             val sessions = if (userPreferences.casualSubjects.isNotEmpty()) {
-                // Move heavy work to Default dispatcher
-                val result = withContext(Dispatchers.Default) {
-                    val normalized = normalizeDailyInputs(
-                        rawDailyStudyHours = userPreferences.casualPreferences.dailyStudyHours,
-                        rawSessionLengthMinutes = userPreferences.casualPreferences.sessionLength.minutes
-                    )
+                // Check for saved plan first
+                if (userPreferences.casualPlanDate == today && userPreferences.casualDailyPlan.isNotEmpty()) {
+                    val sanitizedSaved = userPreferences.casualDailyPlan.map { s ->
+                        s.copy(subject = s.subject.trim(), durationMinutes = max(1, s.durationMinutes))
+                    }
 
-                    val sessionLength = normalized.sessionLengthMinutes
-                    val numberOfSessions = normalized.totalSessions
+                    val validSubjectNames = userPreferences.casualSubjects.map { it.name }.toSet()
+                    val allSubjectsValid = sanitizedSaved.all { it.subject.isNotBlank() && it.subject in validSubjectNames }
+                    val matchingCounts = sanitizedSaved.size == normalized.totalSessions
 
-                    (0 until numberOfSessions).map { index ->
-                        val subject = userPreferences.casualSubjects[index % userPreferences.casualSubjects.size]
-                        CasualSession(
-                            sessionNumber = index + 1,
-                            subjectName = subject.name,
-                            duration = sessionLength,
-                            status = CasualSessionStatus.UPCOMING
-                        )
+                    if (allSubjectsValid && matchingCounts) {
+                        // CRITICAL FIX: Apply database completion status to saved plan
+                        val subjectCompletionTracker = mutableMapOf<String, Int>()
+                        var foundCurrent = false
+
+                        val updatedSessions = sanitizedSaved.mapIndexed { index, s ->
+                            // Determine status based on DB completions
+                            val subjectName = s.subject
+                            val timesCompleted = completionMap.getOrDefault(subjectName, 0)
+                            val currentCount = subjectCompletionTracker.getOrDefault(subjectName, 0)
+
+                            val status = when {
+                                currentCount < timesCompleted -> {
+                                    subjectCompletionTracker[subjectName] = currentCount + 1
+                                    CasualSessionStatus.COMPLETED
+                                }
+                                !foundCurrent -> {
+                                    foundCurrent = true
+                                    CasualSessionStatus.CURRENT
+                                }
+                                else -> CasualSessionStatus.UPCOMING
+                            }
+
+                            CasualSession(
+                                sessionNumber = index + 1,
+                                subjectName = s.subject,
+                                duration = normalized.sessionLengthMinutes,
+                                status = status
+                            )
+                        }
+
+                        // CRITICAL: Only persist if session length actually changed
+                        if (sanitizedSaved.any { it.durationMinutes != normalized.sessionLengthMinutes }) {
+                            shouldPersistPlan = true
+                            android.util.Log.d("HomeViewModel", "Updating casual plan with new session length")
+                        } else {
+                            // Don't persist - just use the loaded plan with updated statuses
+                            android.util.Log.d("HomeViewModel", "Accepting saved casual plan with DB sync - NO PERSIST")
+                        }
+
+                        updatedSessions
+                    } else {
+                        // Regenerate
+                        shouldPersistPlan = true
+                        android.util.Log.d("HomeViewModel", "Regenerating casual plan")
+                        withContext(Dispatchers.Default) {
+                            generateCasualSessions(userPreferences.casualSubjects, normalized.totalSessions, normalized.sessionLengthMinutes, completionMap)
+                        }
+                    }
+                } else {
+                    // No saved plan — generate new
+                    shouldPersistPlan = true
+                    withContext(Dispatchers.Default) {
+                        generateCasualSessions(userPreferences.casualSubjects, normalized.totalSessions, normalized.sessionLengthMinutes, completionMap)
                     }
                 }
-                result
             } else {
-                // NO SUBJECTS - Clear any saved plan and return empty list
-                val authState = authViewModel.authState.first()
-                if (authState is AuthState.Authenticated) {
-                    withContext(Dispatchers.IO) {
-                        val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
-                        if (currentPrefs != null && currentPrefs.casualDailyPlan.isNotEmpty()) {
-                            // Clear the saved plan
-                            val updatedPrefs = currentPrefs.copy(
-                                casualDailyPlan = emptyList(),
-                                casualPlanDate = "",
-                                lastAccessed = System.currentTimeMillis()
-                            )
-                            userPreferencesRepository.saveUserPreferences(updatedPrefs)
-                            android.util.Log.d("HomeViewModel", "Cleared stale casual daily plan")
+                // No subjects - clear plan only if there's actually a plan to clear
+                if (userPreferences.casualDailyPlan.isNotEmpty()) {
+                    val authState = authViewModel.authState.first()
+                    if (authState is AuthState.Authenticated) {
+                        withContext(Dispatchers.IO) {
+                            val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
+                            if (currentPrefs != null && currentPrefs.casualDailyPlan.isNotEmpty()) {
+                                val updatedPrefs = currentPrefs.copy(
+                                    casualDailyPlan = emptyList(),
+                                    casualPlanDate = "",
+                                    lastAccessed = System.currentTimeMillis()
+                                )
+                                userPreferencesRepository.saveUserPreferences(updatedPrefs)
+                                android.util.Log.d("HomeViewModel", "Cleared stale casual daily plan")
+                            }
                         }
                     }
                 }
                 emptyList()
             }
 
+            // CRITICAL: Only persist to DB if we're actually creating/updating a plan
+            if (shouldPersistPlan && sessions.isNotEmpty()) {
+                saveCasualDailyPlan(sessions)
+                android.util.Log.d("HomeViewModel", "Persisted casual plan to preferences only")
+            }
+
             val casualMetrics = CasualMetrics(
-                completedToday = 0,
-                pendingToday = sessions.size,
+                completedToday = sessions.count { it.status == CasualSessionStatus.COMPLETED },
+                pendingToday = sessions.size - sessions.count { it.status == CasualSessionStatus.COMPLETED },
                 studyStreak = 0
             )
             val casualAlerts = generateCasualAlerts(casualTasks)
@@ -1136,6 +1475,45 @@ class HomeViewModel(
                 casualSessions = sessions,
                 casualMetrics = casualMetrics,
                 casualAlerts = casualAlerts
+            )
+        }
+    }
+
+    private fun generateCasualSessions(
+        subjects: List<Subject>,
+        totalSessions: Int,
+        sessionLength: Int,
+        completionMap: Map<String, Int> = emptyMap()
+    ): List<CasualSession> {
+        if (subjects.isEmpty()) return emptyList()
+
+        val subjectCompletionTracker = mutableMapOf<String, Int>()
+        var foundCurrent = false
+
+        return (0 until totalSessions).map { index ->
+            val subject = subjects[index % subjects.size]
+            val subjectName = subject.name
+
+            val timesCompleted = completionMap.getOrDefault(subjectName, 0)
+            val currentCount = subjectCompletionTracker.getOrDefault(subjectName, 0)
+
+            val status = when {
+                currentCount < timesCompleted -> {
+                    subjectCompletionTracker[subjectName] = currentCount + 1
+                    CasualSessionStatus.COMPLETED
+                }
+                !foundCurrent -> {
+                    foundCurrent = true
+                    CasualSessionStatus.CURRENT
+                }
+                else -> CasualSessionStatus.UPCOMING
+            }
+
+            CasualSession(
+                sessionNumber = index + 1,
+                subjectName = subjectName,
+                duration = sessionLength,
+                status = status
             )
         }
     }
@@ -1202,6 +1580,30 @@ class HomeViewModel(
                     casualSessions = _uiState.value.originalCasualSessions,
                     originalCasualSessions = null
                 )
+            }
+        }
+    }
+
+    fun toggleTaskCompletion(taskId: String, isCompleted: Boolean) {
+        viewModelScope.launch {
+            val authState = authViewModel.authState.first()
+            if (authState is AuthState.Authenticated) {
+                val modeName = when (_uiState.value.selectedMode) {
+                    StudyMode.FOCUS -> "FOCUS"
+                    StudyMode.CASUAL -> "CASUAL"
+                    else -> return@launch
+                }
+
+                withContext(Dispatchers.IO) {
+                    userPreferencesRepository.updateTaskCompletion(
+                        userId = authState.uid,
+                        taskId = taskId,
+                        isCompleted = isCompleted,
+                        modeName = modeName
+                    )
+                }
+
+                android.util.Log.d("HomeViewModel", "Task $taskId marked as ${if (isCompleted) "completed" else "incomplete"}")
             }
         }
     }

@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application
+        android:name=".StudyPilotApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -10,7 +11,10 @@
         android:label="@string/app_name"
         android:roundIcon="@drawable/logo"
         android:supportsRtl="true"
-        android:theme="@style/Theme.StudyPilot">
+        android:theme="@style/Theme.StudyPilot"
+        android:largeHeap="true"
+        android:hardwareAccelerated="true"
+        tools:targetApi="31">
 
         <meta-data
             android:name="com.google.android.gms.version"

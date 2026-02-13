@@ -302,9 +302,9 @@ private fun FocusModePreferencesView(
             title = "Daily Study Hours",
             value = prefs.dailyStudyHours,
             onValueChange = onDailyStudyHoursChange,
-            range = 1f..8f, // Changed
-            steps = 6, // Changed
-            valueLabel = { "${it.roundToInt()} hrs" }
+            range = 1f..6f, // Changed
+            steps = 9, // Changed
+            valueLabel = { "${it} hrs" }
         )
 
         OutlinedPillSelector(
@@ -387,7 +387,12 @@ private fun CustomSlider(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = primaryTextColor, fontWeight = FontWeight.Medium)
-            Text(valueLabel(value), style = MaterialTheme.typography.bodyMedium, color = secondaryTextColor)
+            Text(
+                valueLabel(value),
+                style = MaterialTheme.typography.bodyMedium,
+                color = primaryTextColor
+            )
+
         }
 
         Spacer(Modifier.height(4.dp))
@@ -433,9 +438,9 @@ private fun <T> OutlinedPillSelector(
                     contentPadding = PaddingValues(horizontal = 24.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
                         containerColor = if (isSelected) selectionBackground else Color.Transparent,
-                        contentColor = if (isSelected) primaryAccent else secondaryTextColor
+                        contentColor = primaryTextColor
                     ),
-                    border = BorderStroke(1.dp, if (isSelected) primaryAccent else sliderInactiveTrackColor)
+                    border = BorderStroke(1.dp, if (isSelected) primaryAccent else Color.Black)
                 ) {
                     if (isSelected) {
                         Icon(Icons.Default.Check, contentDescription = "Selected", modifier = Modifier.size(16.dp))
@@ -473,7 +478,7 @@ private fun <T> BinaryOutlinedPillSelector(
                         .weight(1f),
                     colors = ButtonDefaults.outlinedButtonColors(
                         containerColor = if (isSelected) selectionBackground else Color.Transparent,
-                        contentColor = if (isSelected) primaryAccent else secondaryTextColor
+                        contentColor = primaryTextColor
                     ),
                     border = BorderStroke(1.dp, if (isSelected) primaryAccent else sliderInactiveTrackColor)
                 ) {

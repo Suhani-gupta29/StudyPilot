@@ -25,6 +25,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+
 @Composable
 fun AuthTextField(
     value: String,
@@ -79,7 +80,11 @@ fun PasswordTextField(
                 Icons.Filled.VisibilityOff
 
             IconButton(onClick = { passwordVisibility = !passwordVisibility }) {
-                Icon(imageVector = image, contentDescription = "Toggle password visibility")
+                Icon(
+                    imageVector = image,
+                    contentDescription = "Toggle password visibility",
+                    tint = Color.White
+                )
             }
         }
     )

@@ -93,6 +93,11 @@ class UserPreferencesRepository(private val userPreferencesDao: UserPreferencesD
                 casualSubjects = casualSubjects,
                 dailyPlan = dailyPlan,
                 dailyPlanDate = incoming.dailyPlanDate ?: dbCurrent.dailyPlanDate,
+                focusDailyPlan = if (incoming.focusDailyPlan.isNotEmpty()) incoming.focusDailyPlan else dbCurrent.focusDailyPlan,
+                focusPlanDate = incoming.focusPlanDate ?: dbCurrent.focusPlanDate,
+                casualDailyPlan = if (incoming.casualDailyPlan.isNotEmpty()) incoming.casualDailyPlan else dbCurrent.casualDailyPlan,
+                casualPlanDate = incoming.casualPlanDate ?: dbCurrent.casualPlanDate,
+                exemptedSessions = incoming.exemptedSessions,
                 tasks = if (incoming.tasks.isNotEmpty()) incoming.tasks else dbCurrent.tasks,
                 casualTasks = if (incoming.casualTasks.isNotEmpty()) incoming.casualTasks else dbCurrent.casualTasks,
                 planType = incoming.planType ?: dbCurrent.planType,
@@ -153,4 +158,92 @@ class UserPreferencesRepository(private val userPreferencesDao: UserPreferencesD
         val name = subjects[0].name.trim().lowercase()
         return name == "general study" || name == "free study"
     }
+
+    suspend fun updateTaskCompletion(userId: String, taskId: String, isCompleted: Boolean, modeName: String) {
+        val currentPrefs = getUserPreferences(userId).firstOrNull() ?: return
+
+        val updatedPrefs = when (modeName) {
+            "FOCUS" -> {
+                val updatedTasks = currentPrefs.tasks.map { task ->
+                    if (task.id == taskId) {
+                        task.copy(completed = isCompleted)
+                    } else {
+                        task
+                    }
+                }
+                currentPrefs.copy(
+                    tasks = updatedTasks,
+                    lastAccessed = System.currentTimeMillis()
+                )
+            }
+            "CASUAL" -> {
+                val updatedCasualTasks = currentPrefs.casualTasks.map { task ->
+                    if (task.id == taskId) {
+                        task.copy(completed = isCompleted)
+                    } else {
+                        task
+                    }
+                }
+                currentPrefs.copy(
+                    casualTasks = updatedCasualTasks,
+                    lastAccessed = System.currentTimeMillis()
+                )
+            }
+            else -> return
+        }
+
+        saveUserPreferences(updatedPrefs)
+        android.util.Log.d("UserPrefsRepo", "Updated task $taskId completion to $isCompleted for mode $modeName")
+    }
+
+
+    suspend fun saveExemptedSession(userId: String, date: String, sessionIndex: Int) {
+        val currentPrefs = getUserPreferences(userId).firstOrNull() ?: return
+
+        val currentExemptions = currentPrefs.exemptedSessions.toMutableMap()
+        val exemptionsForDate = currentExemptions[date]?.toMutableList() ?: mutableListOf()
+
+        if (sessionIndex !in exemptionsForDate) {
+            exemptionsForDate.add(sessionIndex)
+            currentExemptions[date] = exemptionsForDate.sorted()
+        }
+
+        val updatedPrefs = currentPrefs.copy(
+            exemptedSessions = currentExemptions,
+            lastAccessed = System.currentTimeMillis()
+        )
+
+        saveUserPreferences(updatedPrefs)
+        android.util.Log.d("UserPrefsRepo", "Exempted session $sessionIndex on $date")
+    }
+
+    suspend fun removeExemptedSession(userId: String, date: String, sessionIndex: Int) {
+        val currentPrefs = getUserPreferences(userId).firstOrNull() ?: return
+
+        val currentExemptions = currentPrefs.exemptedSessions.toMutableMap()
+        val exemptionsForDate = currentExemptions[date]?.toMutableList() ?: return
+
+        exemptionsForDate.remove(sessionIndex)
+
+        if (exemptionsForDate.isEmpty()) {
+            currentExemptions.remove(date)
+        } else {
+            currentExemptions[date] = exemptionsForDate.sorted()
+        }
+
+        val updatedPrefs = currentPrefs.copy(
+            exemptedSessions = currentExemptions,
+            lastAccessed = System.currentTimeMillis()
+        )
+
+        saveUserPreferences(updatedPrefs)
+        android.util.Log.d("UserPrefsRepo", "Removed exemption for session $sessionIndex on $date")
+    }
+
+    fun getExemptedSessionsForDate(userId: String, date: String): Flow<List<Int>> {
+        return getUserPreferences(userId).map { prefs ->
+            prefs?.exemptedSessions?.get(date) ?: emptyList()
+        }
+    }
+
 }

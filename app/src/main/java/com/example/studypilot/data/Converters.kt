@@ -151,4 +151,16 @@ class Converters {
             emptyList()
         }
     }
+
+    @TypeConverter
+    fun fromExemptedSessions(map: Map<String, List<Int>>?): String? {
+        return gson.toJson(map)
+    }
+
+    @TypeConverter
+    fun toExemptedSessions(json: String?): Map<String, List<Int>>? {
+        if (json == null) return null
+        val type = object : TypeToken<Map<String, List<Int>>>() {}.type
+        return gson.fromJson(json, type) ?: emptyMap()
+    }
 }

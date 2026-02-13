@@ -80,7 +80,11 @@ class CasualModeSetupViewModel(
 
     fun addTask() {
         val currentTasks = _uiState.value.tasks.toMutableList()
-        currentTasks.add(CasualTask("", null, null))
+        currentTasks.add(CasualTask(id = java.util.UUID.randomUUID().toString(),
+            name = "",
+            relatedSubject = null,
+            dueDate = null,
+            completed = false))
         _uiState.value = _uiState.value.copy(tasks = currentTasks)
     }
 

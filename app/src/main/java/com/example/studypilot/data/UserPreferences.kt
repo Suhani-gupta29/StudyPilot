@@ -50,5 +50,6 @@ data class UserPreferences(
 
     val focusPlanDate: String = "",
     val casualDailyPlan: List<StudySession> = emptyList(),
-    val casualPlanDate: String = ""
+    val casualPlanDate: String = "",
+    val exemptedSessions: Map<String, List<Int>> = emptyMap()
 )

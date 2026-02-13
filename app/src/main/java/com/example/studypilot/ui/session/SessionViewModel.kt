@@ -37,7 +37,7 @@ class SessionViewModel(
             timerText = formatTime(remainingSeconds),
             isRunning = false,
             remainingTime = initialMinutes,
-            canEndSession = false,
+            canEndSession = true,  // ← CHANGED: Always allow ending for demo
             sessionSaved = false   // ← flips true after DB write succeeds
         )
     )
@@ -57,12 +57,10 @@ class SessionViewModel(
                 delay(1000)
                 remainingSeconds--
 
-                val canEnd = remainingSeconds <= 120
-
                 _uiState.update {
                     it.copy(
                         timerText = formatTime(remainingSeconds),
-                        canEndSession = canEnd
+                        canEndSession = true  // ← Always true for demo
                     )
                 }
             }
@@ -74,12 +72,10 @@ class SessionViewModel(
     private fun pauseTimer() {
         timerJob?.cancel()
         timerJob = null
-        // ── FIX: update canEndSession while paused so the button
-        //    reflects the correct state even when the timer is not ticking
         _uiState.update {
             it.copy(
                 isRunning = false,
-                canEndSession = remainingSeconds <= 120
+                canEndSession = true  // ← Always true for demo
             )
         }
     }
@@ -88,6 +84,8 @@ class SessionViewModel(
         // ── FIX: guard — if already ended, do nothing
         if (sessionEnded) return
         sessionEnded = true
+
+        android.util.Log.d("SessionViewModel", "endSession() called - sessionEnded flag set")
 
         timerJob?.cancel()
         timerJob = null
@@ -105,6 +103,8 @@ class SessionViewModel(
 
         viewModelScope.launch {
             try {
+                android.util.Log.d("SessionViewModel", "Creating session object - mode: ${_uiState.value.modeName}")
+
                 val session = StudySession(
                     userId = userId,
                     subjectName = _uiState.value.subjectName,
@@ -116,15 +116,19 @@ class SessionViewModel(
                     timestamp = System.currentTimeMillis()
                 )
 
+                android.util.Log.d("SessionViewModel", "Saving session to DB...")
+
                 withContext(Dispatchers.IO) {
                     repository.saveSession(session)
                 }
 
-                android.util.Log.d("SessionViewModel", "Session saved: completed=$completed, elapsed=${elapsed}s, remaining=${remainingSeconds}s")
+                android.util.Log.d("SessionViewModel", "Session saved successfully: completed=$completed, elapsed=${elapsed}s, remaining=${remainingSeconds}s, mode=${_uiState.value.modeName}")
 
                 // ── Signal the composable that DB write is done.
                 //    Composable watches this flag to auto-navigate back to home.
                 _uiState.update { it.copy(sessionSaved = true) }
+
+                android.util.Log.d("SessionViewModel", "sessionSaved flag set to true - should trigger navigation")
 
             } catch (e: Exception) {
                 android.util.Log.e("SessionViewModel", "Failed to save session", e)

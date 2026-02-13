@@ -31,7 +31,7 @@ fun DailySummaryCard(
         Column(modifier = Modifier.padding(20.dp)) {
             Text(
                 text = "Today's Summary",
-                style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1E293B)
             )
@@ -102,14 +102,16 @@ private fun SummaryStatCard(
 
             Text(
                 text = value,
-                fontSize = 20.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
+                fontFamily = Roboto,
                 color = Color(0xFF1E293B)
             )
 
             Text(
                 text = title,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
+                fontFamily = Roboto,
                 color = Color(0xFF64748B)
             )
         }
@@ -162,11 +164,12 @@ fun SubjectProgressSection(subjects: List<SubjectStatUi>) {
                 Text(
                     it.subjectName,
                     fontFamily = Roboto,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    color = Color.Black
                 )
                 Text(
                     "Sessions: ${it.sessionCount} • Avg: ${formatDuration(it.averageSessionSeconds)}",
-                    color = AnalyticsColors.textSecondary,
+                    color = Color.Black,
                     fontFamily = Roboto
                 )
             }
@@ -177,6 +180,7 @@ fun SubjectProgressSection(subjects: List<SubjectStatUi>) {
 @Composable
 private fun AnalyticsCard(
     title: String,
+    titleColor: Color = Color.Black,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
@@ -188,6 +192,8 @@ private fun AnalyticsCard(
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 title,
+                color = titleColor,
+                fontSize = 16.sp,
                 fontFamily = Roboto,
                 fontWeight = FontWeight.SemiBold
             )
@@ -203,7 +209,7 @@ private fun AnalyticsRow(left: String, right: String) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(left, fontFamily = Roboto)
-        Text(right, fontFamily = Roboto)
+        Text(left, fontFamily = Roboto, color = Color.Black)
+        Text(right, fontFamily = Roboto, color = Color.Black)
     }
 }

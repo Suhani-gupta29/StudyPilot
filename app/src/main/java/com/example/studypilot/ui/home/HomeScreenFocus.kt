@@ -35,6 +35,7 @@ import java.util.Locale
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.AssignmentTurnedIn
 import androidx.compose.ui.text.style.TextAlign
+import com.example.studypilot.ui.casual.CasualTask
 
 // --- Strict Color System ---
 private val primaryBlue = Color(0xFF1E88E5)
@@ -53,6 +54,11 @@ private val completedGreen = Color(0xFF2E7D32)
 private val currentBlue = Color(0xFF1E88E5)
 private val upcomingGrey = Color(0xFF90A4AE)
 
+private val gradientTop = Color(0xFFE3F2FD)
+private val gradientBottom = Color(0xFFFFFFFF)
+
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreenFocus(
@@ -65,87 +71,122 @@ fun HomeScreenFocus(
     onNavigateToSettings: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
     onNavigateToPlanner: () -> Unit,
+    onNavigateToSubjects: () -> Unit,
     onEnterSwapMode: () -> Unit,
     onCancelSwap: () -> Unit,
     onSaveSwap: () -> Unit,
     onSessionClickedInSwapMode: (Int) -> Unit,
     onStartSession: (String, String, Int) -> Unit,
-    onNavigateToFocusSetup: () -> Unit  // ADD THIS
+    onNavigateToFocusSetup: () -> Unit,  // ADD THIS
+    onTaskCompletionToggled: (String, Boolean) -> Unit
 ) {
     val activeSession = sessions
         ?.firstOrNull { it.status != SessionStatus.COMPLETED }
 
     Scaffold(
         topBar = { FocusTopAppBar() },
-        bottomBar = { HomeBottomNavigationBar(onNavigateToSettings = onNavigateToSettings, onNavigateToAnalytics = onNavigateToAnalytics, onNavigateToPlanner = onNavigateToPlanner, activeIndex = 0) },
-        containerColor = mainBackground
+        bottomBar = { HomeBottomNavigationBar(onNavigateToSettings = onNavigateToSettings, onNavigateToAnalytics = onNavigateToAnalytics, onNavigateToPlanner = onNavigateToPlanner, onNavigateToSubjects = onNavigateToSubjects, activeIndex = 0) },
+
     ) { paddingValues ->
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            item { ContextHeader() }
-
-            // ONLY CHANGE: Check if there are NO subjects to determine empty state
-            val hasSubjects = focusDetails?.subjects?.isNotEmpty() == true
-
-            if (hasSubjects && sessions != null && sessions.isNotEmpty()) {
-                // EXISTING CODE - NO CHANGES
-                item {
-                    TodayFocusHeader(
-                        isSwapMode = isSwapMode,
-                        onCancelSwap = onCancelSwap,
-                        onEnterSwapMode = onEnterSwapMode,
-                        onSaveSwap = onSaveSwap
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(gradientTop, gradientBottom)
                     )
+                )
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize(),
+                contentPadding = PaddingValues(
+                    top = paddingValues.calculateTopPadding() + 16.dp,
+                    bottom = paddingValues.calculateBottomPadding() + 16.dp,
+                    start = 16.dp,
+                    end = 16.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                item { ContextHeader() }
+
+                // ONLY CHANGE: Check if there are NO subjects to determine empty state
+                val hasSubjects = focusDetails?.subjects?.isNotEmpty() == true
+
+                if (hasSubjects && sessions != null && sessions.isNotEmpty()) {
+                    // EXISTING CODE - NO CHANGES
+                    item {
+                        TodayFocusHeader(
+                            isSwapMode = isSwapMode,
+                            onCancelSwap = onCancelSwap,
+                            onEnterSwapMode = onEnterSwapMode,
+                            onSaveSwap = onSaveSwap
+                        )
+                    }
+                    val firstUncompletedIndex =
+                        sessions.indexOfFirst { it.status != SessionStatus.COMPLETED }
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = cardBackground),
+                            border = BorderStroke(1.dp, cardBorder),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                sessions.forEachIndexed { index, session ->
+                                    FocusSessionCard(
+                                        session = session,
+                                        isSwapMode = isSwapMode,
+                                        isSourceNode = swapSourceIndex == index,
+                                        isCurrent = index == firstUncompletedIndex,
+                                        onClick = {
+                                            if (isSwapMode) {
+                                                onSessionClickedInSwapMode(index)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // EMPTY STATE - Show when no subjects exist
+                    item {
+                        EmptySessionsCard(onClick = onNavigateToFocusSetup)
+                    }
                 }
-                val firstUncompletedIndex = sessions.indexOfFirst { it.status != SessionStatus.COMPLETED }
-                itemsIndexed(sessions, key = { _, session -> session.sessionNumber }) { index, session ->
-                    FocusSessionCard(
-                        session = session,
-                        isSwapMode = isSwapMode,
-                        isSourceNode = swapSourceIndex == index,
-                        isCurrent = index == firstUncompletedIndex,
+
+                item {
+                    BeginFocusSessionButton(
                         onClick = {
-                            if (isSwapMode) {
-                                onSessionClickedInSwapMode(index)
+                            activeSession?.let {
+                                onStartSession(
+                                    it.subjectName,
+                                    "FOCUS",
+                                    it.duration
+                                )
                             }
                         }
                     )
                 }
-            } else {
-                // EMPTY STATE - Show when no subjects exist
-                item {
-                    EmptySessionsCard(onClick = onNavigateToFocusSetup)
-                }
-            }
 
-            item { BeginFocusSessionButton(
-                onClick = {
-                    activeSession?.let {
-                        onStartSession(
-                            it.subjectName,
-                            "FOCUS",
-                            it.duration
+                if (focusDetails != null) {
+                    item {
+                        TasksPanel(
+                            tasks = focusDetails.tasks,
+                            onNavigateToFocusSetup = onNavigateToFocusSetup,
+                            onTaskCompletionToggled = onTaskCompletionToggled
                         )
                     }
                 }
-            ) }
 
-            if (focusDetails != null) {
-                item {
-                    TasksPanel(
-                        tasks = focusDetails.tasks,
-                        onNavigateToFocusSetup = onNavigateToFocusSetup
-                    )
+                if (metrics != null) {
+                    item { ProgressAndStreakPanel(metrics = metrics) }
                 }
-            }
-
-            if (metrics != null) {
-                item { ProgressAndStreakPanel(metrics = metrics) }
             }
         }
     }
@@ -309,7 +350,8 @@ private fun BeginFocusSessionButton(onClick: () -> Unit) {
 @Composable
 private fun TasksPanel(
     tasks: List<FocusTask>,
-    onNavigateToFocusSetup: () -> Unit
+    onNavigateToFocusSetup: () -> Unit,
+    onTaskCompletionToggled: (String, Boolean) -> Unit
 ) {
     Column {
         Text("Suggested Tasks", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = textPrimary, fontFamily = Roboto)
@@ -351,7 +393,7 @@ private fun TasksPanel(
             } else {
                 Column(modifier = Modifier.padding(16.dp)) {
                     tasks.forEachIndexed { index, task ->
-                        TaskRow(task = task)
+                        TaskRow(task = task,onTaskCompletionToggled = onTaskCompletionToggled)
                         if (index < tasks.size - 1) {
                             Divider(color = softDividerLine, modifier = Modifier.padding(vertical = 12.dp))
                         }
@@ -363,15 +405,74 @@ private fun TasksPanel(
 }
 
 @Composable
-private fun TaskRow(task: FocusTask) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun TaskRow(
+    task: FocusTask,
+    onTaskCompletionToggled: (String, Boolean) -> Unit
+) {
+    // Inline status calculation
+    val isCompleted = task.completed
+    val isOverdue = if (!task.completed && task.dueDate != null) {
+        task.dueDate < System.currentTimeMillis()
+    } else false
+
+    val backgroundColor = when {
+        isCompleted -> Color(0xFFE8F5E9) // Light green
+        isOverdue -> Color(0xFFFFEBEE) // Light red
+        else -> Color.Transparent
+    }
+
+    val textColor = when {
+        isCompleted -> textSecondary
+        isOverdue -> Color(0xFFD32F2F)
+        else -> textPrimary
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(backgroundColor, RoundedCornerShape(8.dp))
+            .padding(vertical = 4.dp)
+    ) {
+        androidx.compose.material3.Checkbox(
+            checked = task.completed,
+            onCheckedChange = { isChecked ->
+                onTaskCompletionToggled(task.id, isChecked)
+            },
+            colors = androidx.compose.material3.CheckboxDefaults.colors(
+                checkedColor = completedGreen,
+                uncheckedColor = if (isOverdue) Color(0xFFD32F2F) else textSecondary
+            )
+        )
+
+        Spacer(modifier = Modifier.width(8.dp))
+
         Column(modifier = Modifier.weight(1f)) {
-            Text(task.name, fontSize = 14.sp, color = textPrimary, fontWeight = FontWeight.Medium, fontFamily = Roboto)
-            Text("${task.type.name.lowercase().replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }} • ${task.relatedSubject ?: "None"}", fontSize = 12.sp, color = textSecondary, fontFamily = Roboto)
+            Text(
+                text = task.name,
+                fontSize = 14.sp,
+                color = textColor,
+                fontWeight = FontWeight.Medium,
+                fontFamily = Roboto,
+                textDecoration = if (task.completed) androidx.compose.ui.text.style.TextDecoration.LineThrough else null
+            )
+            Text(
+                text = "${task.type.name.lowercase().replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }} • ${task.relatedSubject ?: "None"}",
+                fontSize = 12.sp,
+                color = textSecondary,
+                fontFamily = Roboto
+            )
         }
+
         task.dueDate?.let {
             val formattedDate = SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(it))
-            Text("Due $formattedDate", fontSize = 12.sp, color = textSecondary, fontFamily = Roboto)
+            Text(
+                text = if (isOverdue) "Overdue" else "Due $formattedDate",
+                fontSize = 12.sp,
+                color = if (isOverdue) Color(0xFFD32F2F) else textSecondary,
+                fontWeight = if (isOverdue) FontWeight.SemiBold else FontWeight.Normal,
+                fontFamily = Roboto
+            )
         }
     }
 }
