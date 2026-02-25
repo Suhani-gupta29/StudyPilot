@@ -81,7 +81,9 @@ data class HomeState(
     val showWeeklyPriorityDialog: Boolean = false,
     val weeklyPriorityDialogMode: StudyMode? = null,
     val showExamOverDialog: Boolean = false,
-    val examOverSubjectsSelected: List<String> = emptyList()
+    val examOverSubjectsSelected: List<String> = emptyList(),
+    // True when exam date is today (0 days) or has passed — prompts user to set a new exam date
+    val showNewExamDialog: Boolean = false
 )
 
 class HomeViewModel(
@@ -100,6 +102,8 @@ class HomeViewModel(
     private var lastUsedSessionLength: Int? = null
     // Track last database update to prevent processExamData from overwriting fresh DB updates
     private var lastDatabaseUpdateTime: Long = 0L
+
+    private var lastSwapSaveTime: Long = 0L
 
     // 🚨 SIMPLE FIX: Force refresh from database
     fun refreshFromDatabase() {
@@ -452,7 +456,8 @@ class HomeViewModel(
         userId: String,
         examDateMs: Long,
         planStartMs: Long,
-        sessionsPerDay: Int
+        sessionsPerDay: Int,
+        exemptedSessions: Map<String, List<Int>> = emptyMap()
     ): Int {
         if (examDateMs <= 0L) return 0
 
@@ -485,9 +490,13 @@ class HomeViewModel(
         while (checkDate.isBefore(today)) {
             val dbForDay = sessionsByDate[checkDate] ?: emptyList()
             val completedCount = dbForDay.count { it.completed }
+            // Sessions explicitly skipped by the user on that day should not count as missed
+            val dateKey = checkDate.toString()
+            val skippedCount = exemptedSessions[dateKey]?.size ?: 0
+            val effectiveRequired = (sessionsPerDay - skippedCount).coerceAtLeast(0)
 
-            if (completedCount < sessionsPerDay) {
-                cumulativeMissed += (sessionsPerDay - completedCount)
+            if (completedCount < effectiveRequired) {
+                cumulativeMissed += (effectiveRequired - completedCount)
             }
 
             checkDate = checkDate.plusDays(1)
@@ -601,6 +610,7 @@ class HomeViewModel(
         val subjectsChanged = currentSubjects != incomingSubjects
 
         val timeSinceLastDbUpdate = System.currentTimeMillis() - lastDatabaseUpdateTime
+        val timeSinceSwapSave = System.currentTimeMillis() - lastSwapSaveTime
         if (timeSinceLastDbUpdate < 2000 && _uiState.value.studySessions != null && !subjectsChanged) {
             android.util.Log.d("HomeViewModel", "Skipping processExamData - database updated ${timeSinceLastDbUpdate}ms ago and subjects unchanged")
             return
@@ -728,7 +738,8 @@ class HomeViewModel(
                 userId = userId,
                 examDateMs = examMillis,
                 planStartMs = userPreferences.planStartDate ?: 0L,
-                sessionsPerDay = normalized.totalSessions
+                sessionsPerDay = normalized.totalSessions,
+                exemptedSessions = userPreferences.exemptedSessions
             )
         }
 
@@ -825,20 +836,29 @@ class HomeViewModel(
             gen
         }
 
-        // Compute real metrics from generated sessions (no placeholders)
-        val completed = sessions.count { it.status == SessionStatus.COMPLETED }
-        val pending = sessions.size - completed
-        val metrics = AccountabilityMetrics(completed = completed, missed = pending, backlog = pending)
-
-        val alerts = generateAlerts(userPreferences, examDetails, metrics)
 
         android.util.Log.d("HomeViewModel", "Final sessions to UI durations=${sessions.map { it.durationMinutes }} subjects=${sessions.map { it.subject }}")
+        // Apply exempted sessions for today so skipped sessions don't reappear on Home Screen
+        val exemptedToday = userPreferences.exemptedSessions[today] ?: emptyList()
+        val finalExamSessions = if (exemptedToday.isNotEmpty()) {
+            sessions
+                .filterIndexed { index, _ -> index !in exemptedToday }
+                .mapIndexed { i, s -> s.copy(sessionNumber = i + 1) }
+        } else {
+            sessions
+        }
+
+        val finalCompleted = finalExamSessions.count { it.status == SessionStatus.COMPLETED }
+        val finalPending = finalExamSessions.size - finalCompleted
+        val finalMetrics = AccountabilityMetrics(completed = finalCompleted, missed = finalPending, backlog = finalPending)
+        val finalAlerts = generateAlerts(userPreferences, examDetails, finalMetrics)
+
         _uiState.value = _uiState.value.copy(
             examDetails = examDetails,
-            studySessions = sessions,
-            alerts = alerts,
-            accountabilityMetrics = metrics,
-            studyStreak = 0 // keep existing behavior for streak if needed
+            studySessions = finalExamSessions,
+            alerts = finalAlerts,
+            accountabilityMetrics = finalMetrics,
+            studyStreak = 0
         )
 
         checkAndShowExamOverDialog(userPreferences, examDetails)
@@ -1072,6 +1092,7 @@ class HomeViewModel(
         // CRITICAL: If database just updated sessions (within last 2 seconds), skip this
         // to prevent overwriting fresh completion status
         val timeSinceLastDbUpdate = System.currentTimeMillis() - lastDatabaseUpdateTime
+        val timeSinceSwapSave = System.currentTimeMillis() - lastSwapSaveTime
         val currentSubjects = _uiState.value.focusDetails?.subjects
         val incomingSubjects = userPreferences.focusSubjects
         val subjectsChanged = currentSubjects != incomingSubjects
@@ -1125,7 +1146,9 @@ class HomeViewModel(
 
                 val validSubjectNames = focusDetails.subjects.map { it.name }.toSet()
                 val allSubjectsValid = sanitizedSaved.all { it.subject.isNotBlank() && it.subject in validSubjectNames }
-                val matchingCounts = sanitizedSaved.size == normalized.totalSessions
+                // Accept plans >= normalized.totalSessions — "Do It Today" legitimately
+                // grows today's plan beyond the base session count.
+                val matchingCounts = sanitizedSaved.size >= normalized.totalSessions
 
                 if (allSubjectsValid && matchingCounts) {
                     // CRITICAL FIX: Apply database completion status to saved plan
@@ -1655,6 +1678,8 @@ class HomeViewModel(
                         originalStudySessions = null
                     )
                     renumberedSessions?.let {
+                        lastSwapSaveTime = System.currentTimeMillis()
+                        lastDatabaseUpdateTime = 0L
                         saveDailyPlan(it)
                         android.util.Log.d("HomeViewModel", "Swap saved and persisted for EXAM mode")
                     }
@@ -1670,6 +1695,8 @@ class HomeViewModel(
                         originalFocusSessions = null
                     )
                     renumberedSessions?.let {
+                        lastSwapSaveTime = System.currentTimeMillis()
+                        lastDatabaseUpdateTime = 0L
                         saveFocusDailyPlan(it)
                         android.util.Log.d("HomeViewModel", "Swap saved and persisted for FOCUS mode")
                     }
@@ -1685,6 +1712,8 @@ class HomeViewModel(
                         originalCasualSessions = null
                     )
                     renumberedSessions?.let {
+                        lastSwapSaveTime = System.currentTimeMillis()
+                        lastDatabaseUpdateTime = 0L
                         saveCasualDailyPlan(it)
                         android.util.Log.d("HomeViewModel", "Swap saved and persisted for CASUAL mode")
                     }
@@ -1778,6 +1807,44 @@ class HomeViewModel(
         }
     }
 
+
+    fun skipCatchupSession(sessionIndex: Int) {
+        viewModelScope.launch {
+            val authState = authViewModel.authState.first()
+            if (authState !is AuthState.Authenticated) return@launch
+
+            val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
+
+            // Update UI immediately
+            val currentSessions = _uiState.value.studySessions?.toMutableList() ?: return@launch
+            val updatedSessions = currentSessions
+                .filterIndexed { index, _ -> index != sessionIndex }
+                .mapIndexed { i, s -> s.copy(sessionNumber = i + 1) }
+            _uiState.value = _uiState.value.copy(studySessions = updatedSessions)
+
+            // Persist exemption to preferences
+            withContext(Dispatchers.IO) {
+                val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first() ?: return@withContext
+                val currentExemptions = currentPrefs.exemptedSessions.toMutableMap()
+                val exemptionsForDate = currentExemptions[today]?.toMutableList() ?: mutableListOf()
+                if (sessionIndex !in exemptionsForDate) {
+                    exemptionsForDate.add(sessionIndex)
+                    currentExemptions[today] = exemptionsForDate.sorted()
+                }
+
+                // Also remove from saved daily plan
+                val updatedPlan = updatedSessions
+                val updatedPrefs = currentPrefs.copy(
+                    exemptedSessions = currentExemptions,
+                    dailyPlan = updatedPlan,
+                    dailyPlanDate = today,
+                    lastAccessed = System.currentTimeMillis()
+                )
+                userPreferencesRepository.saveUserPreferences(updatedPrefs)
+                android.util.Log.d("HomeViewModel", "Skipped catchup session $sessionIndex on $today")
+            }
+        }
+    }
 
     private fun getCurrentWeekStartDate(): String {
         val cal = java.util.Calendar.getInstance()
@@ -1972,16 +2039,70 @@ class HomeViewModel(
 
         val today = java.time.LocalDate.now()
 
-        // Only show if exam date has passed
-        if (!today.isAfter(examDate)) return
+        // Trigger when exam date is TODAY (0 days remaining) OR has already passed
+        if (today.isBefore(examDate)) return
 
-        // Format exam date as string key so we only show once per exam
         val examDateKey = examDate.toString() // "yyyy-MM-dd"
 
-        // Don't show again if already shown/dismissed for this exam date
+        // Don't show again if already handled for this exam date
         if (prefs.examOverDialogShownForExamDate == examDateKey) return
 
-        _uiState.value = _uiState.value.copy(showExamOverDialog = true)
+        // Show the "set new exam" dialog on the home screen
+        _uiState.value = _uiState.value.copy(showNewExamDialog = true)
+    }
+
+    // ── Called when user confirms setting a new exam; preserves all subject data ──
+    fun onNewExamConfirmed() {
+        viewModelScope.launch {
+            val authState = authViewModel.authState.first()
+            if (authState is AuthState.Authenticated) {
+                withContext(Dispatchers.IO) {
+                    val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
+                        ?: return@withContext
+                    val examDateMs = currentPrefs.examDate ?: return@withContext
+                    val examDateKey = java.time.Instant.ofEpochMilli(examDateMs)
+                        .atZone(java.time.ZoneId.systemDefault())
+                        .toLocalDate()
+                        .toString()
+                    // Mark as handled; clear ONLY the date and today's plan — keep all subjects intact
+                    val updatedPrefs = currentPrefs.copy(
+                        examOverDialogShownForExamDate = examDateKey,
+                        examDate = null,                  // clear old date so user sets a new one
+                        dailyPlan = emptyList(),          // today's plan will regenerate
+                        dailyPlanDate = null,
+                        exemptedSessions = emptyMap(),    // reset exemptions for fresh start
+                        lastAccessed = System.currentTimeMillis()
+                    )
+                    userPreferencesRepository.saveUserPreferences(updatedPrefs)
+                }
+            }
+            _uiState.value = _uiState.value.copy(showNewExamDialog = false)
+        }
+    }
+
+    // ── Called when user dismisses without setting new exam (stays on home screen) ──
+    fun onNewExamDismissed() {
+        viewModelScope.launch {
+            val authState = authViewModel.authState.first()
+            if (authState is AuthState.Authenticated) {
+                withContext(Dispatchers.IO) {
+                    val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first()
+                        ?: return@withContext
+                    val examDateMs = currentPrefs.examDate ?: return@withContext
+                    val examDateKey = java.time.Instant.ofEpochMilli(examDateMs)
+                        .atZone(java.time.ZoneId.systemDefault())
+                        .toLocalDate()
+                        .toString()
+                    // Mark as shown so it doesn't reappear, but don't clear any data
+                    val updatedPrefs = currentPrefs.copy(
+                        examOverDialogShownForExamDate = examDateKey,
+                        lastAccessed = System.currentTimeMillis()
+                    )
+                    userPreferencesRepository.saveUserPreferences(updatedPrefs)
+                }
+            }
+            _uiState.value = _uiState.value.copy(showNewExamDialog = false)
+        }
     }
 
     // ── Save the user's post-exam subject selection ──────────────────────────

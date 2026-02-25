@@ -59,6 +59,13 @@ data class UserPreferences(
     val casualWeeklySubjectPriorities: Map<String, List<String>> = emptyMap(),
     val examOverDialogShownForExamDate: String? = null,
     // Subject names the user wants to keep studying after exam date passes
-    val examPostSubjects: List<String> = emptyList()
+    val examPostSubjects: List<String> = emptyList(),
+    val displayName: String? = null,
+
+    // ── Focus mode "Do It Today" — persisted across restarts ─────────────────
+    // Key   = date string "yyyy-MM-dd" from which the session was moved
+    // Value = list of pairs encoded as "sessionIndex:subjectName:durationMinutes"
+    // Using List<String> because Room can't store List<Pair<Int,String>> directly.
+    val focusDoItTodaySessions: Map<String, List<String>> = emptyMap()
     // ─────────────────────────────────────────────────────────────────────────
 )

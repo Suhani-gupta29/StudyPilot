@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.example.studypilot.data.StudyPilotDatabase
 import com.example.studypilot.data.UserPreferencesRepository
 import com.example.studypilot.data.SessionRepository
+import com.example.studypilot.notifications.StudyPilotNotificationManager  // ← ADD THIS IMPORT
 import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,15 @@ class StudyPilotApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // ── ADD THIS: Create notification channels once on app start ──────────
+        // Must run on main thread; this is safe since onCreate() is on main thread.
+        StudyPilotNotificationManager.createChannels(this)
+        // ─────────────────────────────────────────────────────────────────────
+
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            StudyPilotNotificationManager.notifySessionComplete(this, 5)
+        }, 3000)
 
         // Initialize Firebase on background thread
         applicationScope.launch(Dispatchers.IO) {

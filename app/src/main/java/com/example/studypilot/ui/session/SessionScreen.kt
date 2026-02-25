@@ -76,7 +76,11 @@ fun SessionScreen(
             mode = modeName,
             initialMinutes = minutes,
             userId = userId,
-            repository = repository
+            repository = repository,
+            context = context,                    // ← ADD
+            breakDurationMinutes = 1,             // ← ADD (hardcode 5 for now)
+            nextSessionSubject = subjectName,     // ← ADD
+            longestSessionEverSeconds = 0
         )
     )
 

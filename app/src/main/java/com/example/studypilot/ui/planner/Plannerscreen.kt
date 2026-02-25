@@ -983,7 +983,7 @@ private fun PlannedSessionRow(
         }
 
         // Show skip button for redistributed sessions that aren't completed
-        if (session.isRedistributed && mode == StudyMode.EXAM && !session.wasCompleted && onExempt != null) {
+        if (mode == StudyMode.EXAM && session.isRedistributed && !session.wasCompleted && onExempt != null && !dayDetail.isFutureDate) {
             TextButton(
                 onClick = { showExemptDialog = true },
                 colors = ButtonDefaults.textButtonColors(contentColor = ColorMissed)
@@ -997,7 +997,7 @@ private fun PlannedSessionRow(
         }
 
         // Show "Do It Today" button for past incomplete sessions in Focus mode
-        if (mode == StudyMode.FOCUS && !dayDetail.isFutureDate && !dayDetail.isToday && !session.wasCompleted && onDoItToday != null) {
+        if (mode == StudyMode.FOCUS && !dayDetail.isFutureDate && !dayDetail.isToday && !session.wasCompleted && !session.isAddedToday && onDoItToday != null) {
             val today = LocalDate.now()
             val isSignupDay = (today == dayDetail.date.plusDays(1)) // Today is one day after the detail date
 

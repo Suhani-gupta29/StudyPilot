@@ -1,9 +1,13 @@
 package com.example.studypilot.ui.home
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.text.font.FontWeight
 import com.example.studypilot.ui.mode.StudyMode
 
 @Composable
@@ -15,6 +19,7 @@ fun HomeScreen(
     onNavigateToSubjects: () -> Unit,
     onNavigateToCasualSetup: () -> Unit,
     onNavigateToFocusSetup: () -> Unit,
+    onNavigateToExamSetup: () -> Unit = {},
     onStartSession: (subject: String, mode: String, minutes: Int) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -22,6 +27,38 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         android.util.Log.d("HomeScreen", "🏠 Refreshing from database")
         viewModel.refreshFromDatabase()
+    }
+
+    // When exam date is today or has passed, show a dialog asking user to set a new exam date.
+    // Subjects are preserved — only the date is cleared on confirm.
+    if (uiState.showNewExamDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onNewExamDismissed() },
+            title = {
+                Text(
+                    "Exam Day!",
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+            },
+            text = {
+                Text("Your exam date has arrived. Would you like to set a new exam date and continue studying?")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.onNewExamConfirmed()
+                        onNavigateToExamSetup()
+                    }
+                ) {
+                    Text("Set New Exam Date")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onNewExamDismissed() }) {
+                    Text("Not Now")
+                }
+            }
+        )
     }
 
     when (uiState.selectedMode) {
@@ -49,7 +86,8 @@ fun HomeScreen(
             onChangeSessionSubject = { index, subject -> viewModel.changeSessionSubject(index, subject) },
             showExamOverDialog = uiState.showExamOverDialog,
             onSaveExamSubjectReset = { viewModel.saveExamSubjectReset(it) },
-            onDismissExamOverDialog = { viewModel.dismissExamOverDialog() }
+            onDismissExamOverDialog = { viewModel.dismissExamOverDialog() },
+            onSkipCatchupSession = { index -> viewModel.skipCatchupSession(index) }
         )
         StudyMode.FOCUS -> HomeScreenFocus(
             focusDetails = uiState.focusDetails,

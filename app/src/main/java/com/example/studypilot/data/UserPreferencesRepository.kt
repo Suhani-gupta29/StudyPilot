@@ -31,16 +31,22 @@ class UserPreferencesRepository(private val userPreferencesDao: UserPreferencesD
 
                 if (daoPrefs == null) return@collect
 
+                // On first load, always emit whatever the DB has (including empty subject lists —
+                // those are valid states after a delete or a brand-new account).
                 if (current == null) {
-                    if (hasMeaningfulContent(daoPrefs)) state.value = daoPrefs
+                    state.value = daoPrefs
                     return@collect
                 }
 
+                // During the protection window we only block a DB emission if it is strictly
+                // older than what we already have in memory AND the in-memory value was written
+                // by us (i.e. protectedUntil is set). This prevents a stale DAO re-emission
+                // from overwriting a freshly committed save, without blocking intentional
+                // subject deletions or other legitimate updates.
                 val now = System.currentTimeMillis()
-                if (now < (protectedUntil[current.userId] ?: 0L)) {
-                    if (!hasMeaningfulContent(daoPrefs) && hasMeaningfulContent(current)) {
-                        return@collect
-                    }
+                val isProtected = now < (protectedUntil[current.userId] ?: 0L)
+                if (isProtected && daoPrefs.lastAccessed < current.lastAccessed) {
+                    return@collect
                 }
 
                 if (daoPrefs.lastAccessed >= current.lastAccessed) {
@@ -52,15 +58,6 @@ class UserPreferencesRepository(private val userPreferencesDao: UserPreferencesD
         return state.asStateFlow()
     }
 
-    private fun hasMeaningfulContent(prefs: UserPreferences): Boolean {
-        return when (prefs.selectedMode) {
-            StudyMode.EXAM -> prefs.examSubjects.isNotEmpty() && !isPlaceholderSubjects(prefs.examSubjects)
-            StudyMode.FOCUS -> prefs.focusSubjects.isNotEmpty()
-            StudyMode.CASUAL -> prefs.casualSubjects.isNotEmpty()
-            else -> false
-        }
-    }
-
     suspend fun saveUserPreferences(userPreferences: UserPreferences) {
         val now = System.currentTimeMillis()
         val incoming = userPreferences.copy(lastAccessed = now)
@@ -70,9 +67,35 @@ class UserPreferencesRepository(private val userPreferencesDao: UserPreferencesD
         val merged = if (dbCurrent == null) {
             incoming
         } else {
-            val examSubjects = if (incoming.examSubjects.isNotEmpty()) incoming.examSubjects else dbCurrent.examSubjects
-            val casualSubjects = if (incoming.casualSubjects.isNotEmpty()) incoming.casualSubjects else dbCurrent.casualSubjects
-            val dailyPlan = if (incoming.dailyPlan.isNotEmpty()) incoming.dailyPlan else dbCurrent.dailyPlan
+            // Subject lists: always use incoming when the save explicitly sets the mode's
+            // subject field. We distinguish "intentional empty" (caller set it to emptyList()
+            // as the new truth, e.g. deleted last subject) from "not touched" (caller left it
+            // as the default emptyList() because this save is about something else entirely).
+            //
+            // The reliable signal is: if incoming.selectedMode matches the list being saved,
+            // the caller owns that list and we should trust it even if empty.
+            // For other modes' lists we fall back to DB (caller didn't touch them).
+            val examSubjects = when {
+                incoming.selectedMode == StudyMode.EXAM -> incoming.examSubjects  // caller owns this list
+                incoming.examSubjects.isNotEmpty()      -> incoming.examSubjects  // explicit non-empty from any mode
+                else                                    -> dbCurrent.examSubjects // unrelated save, preserve db
+            }
+            val casualSubjects = when {
+                incoming.selectedMode == com.example.studypilot.ui.mode.StudyMode.CASUAL -> incoming.casualSubjects
+                incoming.casualSubjects.isNotEmpty() -> incoming.casualSubjects
+                else -> dbCurrent.casualSubjects
+            }
+
+            // dailyPlan: if the caller explicitly set dailyPlanDate = null in EXAM mode,
+            // that is a deliberate "new exam" reset — do NOT restore the old plan from db.
+            // Restoring it would cause HomeViewModel to reuse sessions built for old subjects.
+            val isExamPlanReset = incoming.dailyPlanDate == null && incoming.selectedMode == StudyMode.EXAM
+            val dailyPlan = when {
+                isExamPlanReset            -> emptyList()           // deliberate reset
+                incoming.dailyPlan.isNotEmpty() -> incoming.dailyPlan   // caller saved a plan
+                else                       -> dbCurrent.dailyPlan   // unrelated save, keep db
+            }
+            val dailyPlanDate = if (isExamPlanReset) null else (incoming.dailyPlanDate ?: dbCurrent.dailyPlanDate)
 
             val examName = incoming.examName ?: dbCurrent.examName
             val examDate = incoming.examDate ?: dbCurrent.examDate
@@ -91,7 +114,7 @@ class UserPreferencesRepository(private val userPreferencesDao: UserPreferencesD
                 examSubjects = examSubjects,
                 casualSubjects = casualSubjects,
                 dailyPlan = dailyPlan,
-                dailyPlanDate = incoming.dailyPlanDate ?: dbCurrent.dailyPlanDate,
+                dailyPlanDate = dailyPlanDate,
                 focusDailyPlan = if (incoming.focusDailyPlan.isNotEmpty()) incoming.focusDailyPlan else dbCurrent.focusDailyPlan,
                 focusPlanDate = incoming.focusPlanDate ?: dbCurrent.focusPlanDate,
                 casualDailyPlan = if (incoming.casualDailyPlan.isNotEmpty()) incoming.casualDailyPlan else dbCurrent.casualDailyPlan,
@@ -114,8 +137,15 @@ class UserPreferencesRepository(private val userPreferencesDao: UserPreferencesD
                 examOverDialogShownForExamDate = incoming.examOverDialogShownForExamDate
                     ?: dbCurrent.examOverDialogShownForExamDate,
                 examPostSubjects = if (incoming.examPostSubjects.isNotEmpty())
-                    incoming.examPostSubjects else dbCurrent.examPostSubjects
+                    incoming.examPostSubjects else dbCurrent.examPostSubjects,
                 // ──────────────────────────────────────────────────────────────────────────────
+                displayName = incoming.displayName ?: dbCurrent.displayName,
+                // Merge "Do It Today" moved session records — always accumulate, never drop.
+                // Incoming wins per-date key so fresh entries are appended.
+                focusDoItTodaySessions = mergePriorityMaps(
+                    incoming.focusDoItTodaySessions,
+                    dbCurrent.focusDoItTodaySessions
+                )
             )
         }
 

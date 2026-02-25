@@ -86,16 +86,15 @@ class ExamViewModel(
             val authState = authViewModel.authState.first()
             if (authState is AuthState.Authenticated) {
 
-                // Trim subject names and only remove blanks here (single source of sanitization)
+                // Trim subject names and filter blanks
                 val trimmed = _uiState.value.subjects.map { it.copy(name = it.name.trim()) }
-                val nonBlank = trimmed.filter { it.name.isNotBlank() }
+                val newSubjects = trimmed.filter { it.name.isNotBlank() }
 
-                // If user provided at least one non-blank subject, persist those.
-                // If user provided none, persist a single fallback subject "General Study".
-                val subjectsToSave = if (nonBlank.isNotEmpty()) nonBlank
-                else listOf(Subject("General Study", Priority.Low, Difficulty.Medium))
+                // Use exactly what the user entered; fall back to placeholder only if truly empty
+                val subjectsToSave = newSubjects.ifEmpty {
+                    listOf(Subject("General Study", Priority.Low, Difficulty.Medium))
+                }
 
-                // Debug log before saving
                 Log.d(TAG, "Saving exam details: name=${_uiState.value.examName}, date=${_uiState.value.examDate}, subjects=$subjectsToSave")
 
                 val currentPrefs =
@@ -109,25 +108,36 @@ class ExamViewModel(
                             lastAccessed = System.currentTimeMillis()
                         )
 
+                // REPLACE exam subjects with exactly what the user entered on this screen.
+                // This is a deliberate new-exam setup — the new plan must be built from
+                // these subjects only, not from any previously saved list.
+                //
+                // Clear dailyPlan + dailyPlanDate so HomeViewModel sees no valid cached plan
+                // and regenerates from scratch using subjectsToSave.
+                //
+                // Clear exemptedSessions because they reference sessions from the old plan.
+                // Reset examOverDialogShownForExamDate so the dialog triggers correctly
+                // at the new exam date if one is set.
                 val updatedPrefs = currentPrefs.copy(
                     examName = _uiState.value.examName,
                     examDate = _uiState.value.examDate,
                     planStartDate = System.currentTimeMillis(),
                     examSubjects = subjectsToSave,
-                    selectedMode = StudyMode.EXAM
+                    selectedMode = StudyMode.EXAM,
+                    dailyPlan = emptyList(),
+                    dailyPlanDate = null,
+                    exemptedSessions = emptyMap(),
+                    examOverDialogShownForExamDate = null,
+                    lastAccessed = System.currentTimeMillis()
                 )
 
                 userPreferencesRepository.saveUserPreferences(updatedPrefs)
 
-                // Confirm persistence by reading the prefs Flow once; repository emits the saved value immediately after save.
                 val persisted = userPreferencesRepository.getUserPreferences(authState.uid).first()
-                Log.d(TAG, "Persisted prefs examSubjects=${persisted?.examSubjects}")
+                Log.d(TAG, "Persisted prefs examSubjects=${persisted?.examSubjects}, dailyPlanDate=${persisted?.dailyPlanDate}")
             }
         }
     }
-
-
-
 }
 
 class ExamViewModelFactory(

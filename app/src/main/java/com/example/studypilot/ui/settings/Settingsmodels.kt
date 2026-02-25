@@ -30,9 +30,14 @@ data class SettingsState(
     val isSaving: Boolean = false,
     val errorMessage: String? = null,
 
+    // Exam date (only relevant in EXAM mode)
+    val examDate: Long? = null,
+    val examName: String? = null,
+
     // Dialogs
     val showSignOutDialog: Boolean = false,
     val showNameEditDialog: Boolean = false,
+    val showExamDateDialog: Boolean = false,
 )
 
 sealed class SettingsEffect {

@@ -91,7 +91,8 @@ fun HomeScreenExam(
     // ── Exam-over subject reset dialog ─────────────────────────────────────
     showExamOverDialog: Boolean,
     onSaveExamSubjectReset: (List<String>) -> Unit,
-    onDismissExamOverDialog: () -> Unit
+    onDismissExamOverDialog: () -> Unit,
+    onSkipCatchupSession: (Int) -> Unit = {}
 ) {
     val activeSession = sessions?.firstOrNull { it.status != SessionStatus.COMPLETED }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
@@ -187,13 +188,18 @@ fun HomeScreenExam(
                                         isSourceNode = swapSourceIndex == index,
                                         isCurrent = index == firstUncompletedIndex,
                                         showEditSubjectButton = !isSwapMode &&
-                                                session.status == SessionStatus.UPCOMING,
+                                                session.status == SessionStatus.UPCOMING &&
+                                                !session.isRedistributed,
                                         onClick = {
                                             if (isSwapMode) onSessionClickedInSwapMode(index)
                                         },
                                         onEditSubjectClicked = {
                                             onEnterSubjectChangeMode(index)
-                                        }
+                                        },
+                                        onSkipCatchup = if (session.isRedistributed &&
+                                            session.status != SessionStatus.COMPLETED) {
+                                            { onSkipCatchupSession(index) }
+                                        } else null
                                     )
                                 }
                             }
@@ -202,6 +208,7 @@ fun HomeScreenExam(
                 }
                 item {
                     StartSessionButton(
+                        enabled = activeSession != null,
                         onClick = {
                             activeSession?.let {
                                 onStartSession(it.subject, "EXAM", it.durationMinutes)
@@ -379,13 +386,70 @@ private fun TodayStudyPlanHeader(
     onEnterSwapMode: () -> Unit,
     onSaveSwap: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-            .background(sectionBackground)
-            .padding(16.dp)
-    ) {
+    if (isSwapMode) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(primaryBlue)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Reorder Sessions",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontFamily = Roboto
+                )
+                Text(
+                    text = "Tap to select, tap another to swap",
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontFamily = Roboto
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = onCancelSwap,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        "Cancel",
+                        fontSize = 13.sp,
+                        fontFamily = Roboto,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Button(
+                    onClick = onSaveSwap,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = primaryBlue
+                    ),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                ) {
+                    Text(
+                        "Save",
+                        fontSize = 13.sp,
+                        fontFamily = Roboto,
+                        fontWeight = FontWeight.Bold,
+                        color = primaryBlue
+                    )
+                }
+            }
+        }
+    } else {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -400,7 +464,6 @@ private fun TodayStudyPlanHeader(
                     fontFamily = Roboto,
                     lineHeight = 21.6.sp
                 )
-                Spacer(Modifier.height(2.dp))
                 Text(
                     text = "Tap ✏️ on a session to change its subject",
                     fontSize = 12.sp,
@@ -410,16 +473,12 @@ private fun TodayStudyPlanHeader(
                     lineHeight = 16.2.sp
                 )
             }
-            if (isSwapMode) {
-                Row {
-                    TextButton(onClick = onCancelSwap) { Text("Cancel") }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = onSaveSwap) { Text("Save") }
-                }
-            } else {
-                IconButton(onClick = onEnterSwapMode) {
-                    Icon(Icons.Rounded.SwapHoriz, contentDescription = "Swap Sessions")
-                }
+            IconButton(onClick = onEnterSwapMode) {
+                Icon(
+                    Icons.Rounded.SwapHoriz,
+                    contentDescription = "Swap Sessions",
+                    tint = primaryBlue
+                )
             }
         }
     }
@@ -433,7 +492,8 @@ private fun SessionCard(
     isCurrent: Boolean,
     showEditSubjectButton: Boolean,
     onClick: () -> Unit,
-    onEditSubjectClicked: () -> Unit
+    onEditSubjectClicked: () -> Unit,
+    onSkipCatchup: (() -> Unit)? = null
 ) {
     val isCompleted = session.status == SessionStatus.COMPLETED
     val animatedCardColor by animateColorAsState(
@@ -505,14 +565,35 @@ private fun SessionCard(
                     lineHeight = 18.9.sp
                 )
                 Spacer(Modifier.height(2.dp))
-                Text(
-                    text = "${session.durationMinutes} minutes",
-                    fontSize = 12.sp,
-                    color = textSecondary,
-                    fontFamily = Roboto,
-                    fontWeight = FontWeight.Normal,
-                    lineHeight = 16.2.sp
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "${session.durationMinutes} minutes",
+                        fontSize = 12.sp,
+                        color = textSecondary,
+                        fontFamily = Roboto,
+                        fontWeight = FontWeight.Normal,
+                        lineHeight = 16.2.sp
+                    )
+                    if (session.isRedistributed) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFFFFF3E0))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "Catch-up",
+                                fontSize = 9.sp,
+                                color = Color(0xFFE65100),
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = Roboto
+                            )
+                        }
+                    }
+                }
             }
 
             when {
@@ -521,6 +602,20 @@ private fun SessionCard(
                     contentDescription = "Completed",
                     tint = completedGreen
                 )
+                session.isRedistributed && onSkipCatchup != null && !isSwapMode -> {
+                    TextButton(
+                        onClick = onSkipCatchup,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            "Skip",
+                            fontSize = 12.sp,
+                            color = Color(0xFFE53935),
+                            fontFamily = Roboto,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
                 showEditSubjectButton -> IconButton(
                     onClick = onEditSubjectClicked,
                     modifier = Modifier.size(36.dp)
@@ -538,30 +633,39 @@ private fun SessionCard(
 }
 
 @Composable
-private fun StartSessionButton(onClick: () -> Unit) {
+private fun StartSessionButton(onClick: () -> Unit, enabled: Boolean = true) {
     Spacer(Modifier.height(4.dp))
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
             .shadow(
-                elevation = 8.dp,
+                elevation = if (enabled) 8.dp else 0.dp,
                 shape = RoundedCornerShape(18.dp),
                 spotColor = primaryBlue.copy(alpha = 0.4f)
             ),
         shape = RoundedCornerShape(18.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent,
+            disabledContainerColor = Color(0xFFE0E0E0)
+        ),
         contentPadding = PaddingValues()
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(colors = listOf(Color(0xFF2196F3), primaryBlue))),
+                .background(
+                    if (enabled)
+                        Brush.verticalGradient(colors = listOf(Color(0xFF2196F3), primaryBlue))
+                    else
+                        Brush.verticalGradient(colors = listOf(Color(0xFFBDBDBD), Color(0xFF9E9E9E)))
+                ),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                "Start Session →",
+                if (enabled) "Start Session →" else "All sessions complete ✓",
                 color = Color.White,
                 fontSize = 15.sp,
                 fontFamily = Roboto,

@@ -69,6 +69,8 @@ class PlannerViewModel(
 
     private var userStartDate: LocalDate? = null
 
+    private val doItTodayMap: MutableMap<String, MutableSet<Int>> = mutableMapOf()
+
     // ── redistribution map built during rebuildCalendar, consumed by rebuildDayDetail ──
     private var cachedRedistributionMap: Map<LocalDate, Int> = emptyMap()
 
@@ -131,6 +133,18 @@ class PlannerViewModel(
                 }
 
                 cachedExemptedSessions = prefs.exemptedSessions
+
+                // Restore in-memory doItTodayMap from persisted prefs so the button stays
+                // hidden even after logout/restart.
+                if (cachedMode == StudyMode.FOCUS) {
+                    prefs.focusDoItTodaySessions.forEach { (dateStr, encodedList) ->
+                        val indices = encodedList.mapNotNull { encoded ->
+                            encoded.split(":").firstOrNull()?.toIntOrNull()
+                        }.toMutableSet()
+                        doItTodayMap[dateStr] = indices
+                    }
+                }
+
                 android.util.Log.d("PlannerViewModel", "Reloaded prefs: mode=$cachedMode, dailyPlanDate=$cachedDailyPlanDate, subjects=${cachedExamSubjectsWithData.size}")
 
                 val prefsChanged = when (cachedMode) {
@@ -247,6 +261,7 @@ class PlannerViewModel(
     }
 
     fun doItToday(sessionIndex: Int, fromDate: LocalDate) {
+        // Only supported for FOCUS mode (UI only shows button in FOCUS)
         if (cachedMode != StudyMode.FOCUS) return
 
         viewModelScope.launch {
@@ -264,49 +279,105 @@ class PlannerViewModel(
                         return@withContext
                     }
 
-                    // Get current today's plan
-                    val currentPlan = if (currentPrefs.focusPlanDate == todayStr) {
-                        currentPrefs.focusDailyPlan.toMutableList()
+                    // Find the specific session clicked from the fromDate's plan
+                    val fromDateStr = fromDate.toString()
+
+                    // Determine subjectName and duration from the source date's saved plan
+                    val subjectName: String
+                    val durationMinutes: Int
+
+                    val savedPlanForDate = if (currentPrefs.focusPlanDate == fromDateStr) {
+                        currentPrefs.focusDailyPlan
+                    } else null
+
+                    if (savedPlanForDate != null && sessionIndex < savedPlanForDate.size) {
+                        val session = savedPlanForDate[sessionIndex]
+                        subjectName = session.subject
+                        durationMinutes = session.durationMinutes
                     } else {
-                        mutableListOf()
-                    }
-
-                    // Add ALL of yesterday's missed sessions to today
-                    val missedFromYesterday = addYesterdaysMissedSessionsToToday()
-
-                    android.util.Log.d("PlannerViewModel", "Adding ${missedFromYesterday.size} missed sessions from yesterday to today")
-
-                    missedFromYesterday.forEach { missed ->
-                        val newSession = com.example.studypilot.ui.shared.StudySession(
-                            sessionNumber = currentPlan.size + 1,
-                            subject = missed.subjectName,
-                            durationMinutes = missed.durationMinutes,
-                            status = com.example.studypilot.ui.shared.SessionStatus.UPCOMING
+                        // Fallback: generate subject order for that date and pick by index
+                        val subjects = cachedFocusSubjectsWithData
+                        if (subjects.isEmpty()) {
+                            android.util.Log.d("PlannerViewModel", "No subjects to add")
+                            return@withContext
+                        }
+                        val sessionsPerDay = deriveSessions(cachedDailyStudyHours, cachedSessionLengthMinutes)
+                        val generatedOrder = com.example.studypilot.utils.SessionGenerator.generateFocusSessionOrder(
+                            subjects, sessionsPerDay
                         )
-                        currentPlan.add(newSession)
+                        subjectName = if (generatedOrder.isNotEmpty()) {
+                            generatedOrder[sessionIndex % generatedOrder.size]
+                        } else {
+                            subjects[sessionIndex % subjects.size].name
+                        }
+                        durationMinutes = cachedSessionLengthMinutes
                     }
+
+                    // Get current today's saved plan — if none exists yet, generate the base plan
+                    // so we don't create a 1-session plan that gets rejected by HomeViewModel.
+                    val basePlan: MutableList<com.example.studypilot.ui.shared.StudySession> =
+                        if (currentPrefs.focusPlanDate == todayStr && currentPrefs.focusDailyPlan.isNotEmpty()) {
+                            currentPrefs.focusDailyPlan.toMutableList()
+                        } else {
+                            // Generate a fresh base plan matching what HomeViewModel would create
+                            val subjects = cachedFocusSubjectsWithData
+                            val sessionsPerDay = deriveSessions(cachedDailyStudyHours, cachedSessionLengthMinutes)
+                            if (subjects.isNotEmpty()) {
+                                val subjectOrder = com.example.studypilot.utils.SessionGenerator.generateFocusSessionOrder(
+                                    subjects, sessionsPerDay
+                                )
+                                subjectOrder.mapIndexed { idx, name ->
+                                    com.example.studypilot.ui.shared.StudySession(
+                                        sessionNumber = idx + 1,
+                                        subject = name,
+                                        durationMinutes = cachedSessionLengthMinutes,
+                                        status = com.example.studypilot.ui.shared.SessionStatus.UPCOMING
+                                    )
+                                }.toMutableList()
+                            } else {
+                                mutableListOf()
+                            }
+                        }
+
+                    // Append the "Do It Today" session
+                    val newSession = com.example.studypilot.ui.shared.StudySession(
+                        sessionNumber = basePlan.size + 1,
+                        subject = subjectName,
+                        durationMinutes = durationMinutes,
+                        status = com.example.studypilot.ui.shared.SessionStatus.UPCOMING
+                    )
+                    basePlan.add(newSession)
 
                     // Renumber all sessions
-                    val renumberedPlan = currentPlan.mapIndexed { index, session ->
+                    val renumberedPlan = basePlan.mapIndexed { index, session ->
                         session.copy(sessionNumber = index + 1)
                     }
 
-                    // Save
                     val updatedPrefs = currentPrefs.copy(
                         focusDailyPlan = renumberedPlan,
                         focusPlanDate = todayStr,
+                        lastAccessed = System.currentTimeMillis()
                     )
 
-                    preferencesRepository.saveUserPreferences(updatedPrefs)
+                    // Persist which sessions were moved so the "Do It Today" button
+                    // stays hidden even after app restart or logout.
+                    val updatedDoItTodayMap = currentPrefs.focusDoItTodaySessions.toMutableMap()
+                    val existingForDate = updatedDoItTodayMap[fromDateStr]?.toMutableList() ?: mutableListOf()
+                    val encoded = "$sessionIndex:$subjectName:$durationMinutes"
+                    if (!existingForDate.contains(encoded)) existingForDate.add(encoded)
+                    updatedDoItTodayMap[fromDateStr] = existingForDate
 
-                    android.util.Log.d("PlannerViewModel", "Added ${missedFromYesterday.size} sessions to today")
+                    preferencesRepository.saveUserPreferences(
+                        updatedPrefs.copy(focusDoItTodaySessions = updatedDoItTodayMap)
+                    )
+                    doItTodayMap.getOrPut(fromDateStr) { mutableSetOf() }.add(sessionIndex)
+                    android.util.Log.d("PlannerViewModel", "DoItToday: added session '$subjectName' from $fromDate to today. New plan size=${renumberedPlan.size}")
 
                 } catch (e: Exception) {
                     android.util.Log.e("PlannerViewModel", "Failed to add to today", e)
                 }
             }
 
-            // Refresh
             rebuildCalendar()
         }
     }
@@ -452,11 +523,26 @@ class PlannerViewModel(
                         else -> { // past days
                             if (completedCount > 0) {
                                 val s = computeDayStatus(sessionsPerDay, completedCount)
-                                if (s == DayStatus.MISSED || s == DayStatus.PARTIAL)
-                                    cumulativeMissed += (sessionsPerDay - completedCount).coerceAtLeast(0)
+                                if (s == DayStatus.MISSED || s == DayStatus.PARTIAL) {
+                                    val dateStr = date.toString()
+                                    // Subtract sessions the user moved to today via "Do It Today"
+                                    // so those don't double-count as missed.
+                                    val movedCount = doItTodayMap[dateStr]?.size ?: 0
+                                    val effectiveMissed = (sessionsPerDay - completedCount - movedCount).coerceAtLeast(0)
+                                    cumulativeMissed += effectiveMissed
+                                }
                                 s
                             } else {
-                                DayStatus.EMPTY // past day with no DB data
+                                // No completions — check if all sessions were moved via "Do It Today"
+                                val dateStr = date.toString()
+                                val movedCount = doItTodayMap[dateStr]?.size ?: 0
+                                if (movedCount >= sessionsPerDay) {
+                                    DayStatus.PLANNED // Treated as "handled" — not missed
+                                } else {
+                                    val effectiveMissed = (sessionsPerDay - movedCount).coerceAtLeast(0)
+                                    if (effectiveMissed > 0) cumulativeMissed += effectiveMissed
+                                    DayStatus.EMPTY // past day with no DB data
+                                }
                             }
                         }
                     }
@@ -618,6 +704,7 @@ class PlannerViewModel(
                 android.util.Log.d("PlannerViewModel", "Saved plan subjects: ${savedPlanForToday.map { it.subject }}")
 
                 val completedNames = dbForDay.filter { it.completed }.map { it.subjectName }.toMutableList()
+                val movedIndices = doItTodayMap[dateStr] ?: emptySet()   // ← ADDED
 
                 savedPlanForToday.mapIndexed { i, session ->
                     val wasCompleted = completedNames.remove(session.subject)
@@ -627,7 +714,8 @@ class PlannerViewModel(
                         subjectName = session.subject,
                         durationMinutes = cachedSessionLengthMinutes,
                         wasCompleted = wasCompleted,
-                        isRedistributed = i >= sessionsPerDay  // Mark sessions beyond base count
+                        isRedistributed = i >= sessionsPerDay,
+                        isAddedToday = movedIndices.contains(i) // Mark sessions beyond base count
                     )
                 }
             } else {
@@ -671,7 +759,8 @@ class PlannerViewModel(
                         subjectName,
                         cachedSessionLengthMinutes,
                         wasCompleted,
-                        isRedistributed = i >= sessionsPerDay
+                        isRedistributed = i >= sessionsPerDay,
+                        isAddedToday = false
                     )
                 }
             }

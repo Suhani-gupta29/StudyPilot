@@ -1,9 +1,13 @@
 package com.example.studypilot.ui.session
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.studypilot.data.SessionRepository
 import com.example.studypilot.data.StudySession
+import com.example.studypilot.notifications.BreakEndWorker               // ← ADD
+import com.example.studypilot.notifications.SessionNotificationHelper    // ← ADD
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,17 +22,23 @@ class SessionViewModel(
     mode: String,
     initialMinutes: Int,
     private val userId: String,
-    private val repository: SessionRepository
+    private val repository: SessionRepository,
+    // ── ADD these 4 new parameters ───────────────────────────────────────────
+    private val context: Context,
+    private val breakDurationMinutes: Int = 1,         // from user's break preference
+    private val nextSessionSubject: String = subject,  // next session in today's plan
+    private val longestSessionEverSeconds: Int = 0     // from analytics, for personal best
+    // ─────────────────────────────────────────────────────────────────────────
 ) : ViewModel() {
 
     private val totalSeconds = initialMinutes * 60
     private var remainingSeconds = totalSeconds
-
     private var timerJob: Job? = null
-
-    // ── FIX: guard so endSession() can never execute twice
-    //    (auto-end when timer hits 0 and user tapping End at the same tick)
     private var sessionEnded = false
+
+    // ── ADD: notification helper ─────────────────────────────────────────────
+    private val notifHelper = SessionNotificationHelper()
+    // ─────────────────────────────────────────────────────────────────────────
 
     val sessionId = "${userId}_${System.currentTimeMillis()}"
 
@@ -39,7 +49,7 @@ class SessionViewModel(
             timerText = formatTime(remainingSeconds),
             isRunning = false,
             remainingTime = initialMinutes,
-            canEndSession = true,  // ← CHANGED: Always allow ending for demo
+            canEndSession = true,
             sessionSaved = false,
             sessionId = "${userId}_${System.currentTimeMillis()}"
         )
@@ -53,6 +63,10 @@ class SessionViewModel(
     private fun startTimer() {
         if (timerJob != null) return
 
+        // ── ADD: cancel any pending break notification when user starts a new session
+        BreakEndWorker.cancel(context)
+        // ─────────────────────────────────────────────────────────────────────
+
         _uiState.update { it.copy(isRunning = true) }
 
         timerJob = viewModelScope.launch {
@@ -60,10 +74,21 @@ class SessionViewModel(
                 delay(1000)
                 remainingSeconds--
 
+                val elapsed = totalSeconds - remainingSeconds
+
+                // ── ADD: check every tick for "studied too long without break" ─
+                notifHelper.onStudyTick(
+                    context          = context,
+                    elapsedSeconds   = elapsed,
+                    breakDurationMin = breakDurationMinutes,
+                    nextSubject      = nextSessionSubject
+                )
+                // ─────────────────────────────────────────────────────────────
+
                 _uiState.update {
                     it.copy(
                         timerText = formatTime(remainingSeconds),
-                        canEndSession = true  // ← Always true for demo
+                        canEndSession = true
                     )
                 }
             }
@@ -75,39 +100,25 @@ class SessionViewModel(
     private fun pauseTimer() {
         timerJob?.cancel()
         timerJob = null
-        _uiState.update {
-            it.copy(
-                isRunning = false,
-                canEndSession = true  // ← Always true for demo
-            )
-        }
+        _uiState.update { it.copy(isRunning = false, canEndSession = true) }
     }
 
     fun endSession() {
-        // ── FIX: guard — if already ended, do nothing
         if (sessionEnded) return
         sessionEnded = true
 
-        android.util.Log.d("SessionViewModel", "endSession() called - sessionEnded flag set")
+        android.util.Log.d("SessionViewModel", "endSession() called")
 
         timerJob?.cancel()
         timerJob = null
 
         val elapsed = totalSeconds - remainingSeconds
-
-        // ── FIX: completed = true whenever endSession() runs.
-        //    The user either pressed End consciously, or the timer hit zero.
-        //    Both mean "this session is done".
-        //    completed=false should only exist for crash-abandoned rows
-        //    (where endSession never ran at all).
         val completed = true
 
         _uiState.update { it.copy(isRunning = false) }
 
         viewModelScope.launch {
             try {
-                android.util.Log.d("SessionViewModel", "Creating session object - mode: ${_uiState.value.modeName}")
-
                 val session = StudySession(
                     userId = userId,
                     subjectName = _uiState.value.subjectName,
@@ -119,19 +130,37 @@ class SessionViewModel(
                     timestamp = System.currentTimeMillis()
                 )
 
-                android.util.Log.d("SessionViewModel", "Saving session to DB...")
-
                 withContext(Dispatchers.IO) {
                     repository.saveSession(session)
                 }
 
-                android.util.Log.d("SessionViewModel", "Session saved successfully: completed=$completed, elapsed=${elapsed}s, remaining=${remainingSeconds}s, mode=${_uiState.value.modeName}")
+                android.util.Log.d("SessionViewModel", "Session saved: elapsed=${elapsed}s")
 
-                // ── Signal the composable that DB write is done.
-                //    Composable watches this flag to auto-navigate back to home.
+                // ── ADD: fire immediate "session done / personal best" notification
+                notifHelper.onSessionEnded(
+                    context                   = context,
+                    elapsedSeconds            = elapsed,
+                    longestSessionEverSeconds = longestSessionEverSeconds,
+                    breakDurationMin          = breakDurationMinutes
+                )
+
+                // ── ADD: schedule break-end notification after N minutes ──────
+                // This fires even after the user leaves the app / screen.
+                // Uses the break preference the user set in Mode Selection.
+                // Example: user set 5-min break → notification fires in 5 mins:
+                //   "⏰ Break's Over! Ready to focus on [Math]? Let's go! 💪"
+                BreakEndWorker.schedule(
+                    context       = context,
+                    breakMinutes  = breakDurationMinutes,
+                    nextSubject   = nextSessionSubject
+                )
+                android.util.Log.d(
+                    "SessionViewModel",
+                    "Break notification scheduled for $breakDurationMinutes min. Next: $nextSessionSubject"
+                )
+                // ─────────────────────────────────────────────────────────────
+
                 _uiState.update { it.copy(sessionSaved = true) }
-
-                android.util.Log.d("SessionViewModel", "sessionSaved flag set to true - should trigger navigation")
 
             } catch (e: Exception) {
                 android.util.Log.e("SessionViewModel", "Failed to save session", e)
@@ -142,7 +171,8 @@ class SessionViewModel(
     override fun onCleared() {
         super.onCleared()
         timerJob?.cancel()
-        android.util.Log.d("SessionViewModel", "ViewModel cleared, timer cancelled")
+        notifHelper.reset()
+        android.util.Log.d("SessionViewModel", "ViewModel cleared")
     }
 
     private fun formatTime(seconds: Int): String {
@@ -152,3 +182,4 @@ class SessionViewModel(
         return "%02d:%02d:%02d".format(h, m, s)
     }
 }
+

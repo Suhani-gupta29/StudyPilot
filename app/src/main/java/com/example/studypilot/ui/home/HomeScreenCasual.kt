@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -326,35 +327,81 @@ private fun TodayCasualHeader(
     onEnterSwapMode: () -> Unit,
     onSaveSwap: () -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column {
-            Text(
-                "Today's Plan",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = textPrimary,
-                fontFamily = Roboto
-            )
-            Text(
-                "Tap ✏️ on a session to change its subject",
-                fontSize = 12.sp,
-                color = textSecondary,
-                fontFamily = Roboto
-            )
-        }
-        if (isSwapMode) {
-            Row {
-                TextButton(onClick = onCancelSwap) { Text("Cancel") }
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(onClick = onSaveSwap) { Text("Save") }
+    if (isSwapMode) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(primaryBlue)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Reorder Sessions",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontFamily = Roboto
+                )
+                Text(
+                    text = "Tap to select, tap another to swap",
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontFamily = Roboto
+                )
             }
-        } else {
+            Spacer(Modifier.width(12.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = onCancelSwap,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text("Cancel", fontSize = 13.sp, fontFamily = Roboto, fontWeight = FontWeight.Medium)
+                }
+                Button(
+                    onClick = onSaveSwap,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = primaryBlue
+                    ),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                ) {
+                    Text("Save", fontSize = 13.sp, fontFamily = Roboto, fontWeight = FontWeight.Bold, color = primaryBlue)
+                }
+            }
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    "Today's Plan",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = textPrimary,
+                    fontFamily = Roboto
+                )
+                Text(
+                    "Tap ✏️ on a session to change its subject",
+                    fontSize = 12.sp,
+                    color = textSecondary,
+                    fontFamily = Roboto
+                )
+            }
             IconButton(onClick = onEnterSwapMode) {
-                Icon(Icons.Rounded.SwapHoriz, contentDescription = "Swap Sessions")
+                Icon(Icons.Rounded.SwapHoriz, contentDescription = "Swap Sessions", tint = primaryBlue)
             }
         }
     }

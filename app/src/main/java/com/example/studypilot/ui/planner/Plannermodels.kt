@@ -54,7 +54,8 @@ data class PlannedSessionInfo(
     val subjectName: String,
     val durationMinutes: Int,
     val wasCompleted: Boolean,
-    val isRedistributed: Boolean = false
+    val isRedistributed: Boolean = false,
+    val isAddedToday: Boolean = false
 )
 
 data class CompletedSessionInfo(

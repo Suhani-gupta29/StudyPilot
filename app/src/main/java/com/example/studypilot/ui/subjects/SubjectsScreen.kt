@@ -127,21 +127,23 @@ fun SubjectsScreen(
             var showFabMenu by remember { mutableStateOf(false) }
             Column(horizontalAlignment = Alignment.End) {
                 if (showFabMenu) {
-                    FloatingActionButton(
-                        onClick = {
-                            showFabMenu = false
-                            viewModel.openAddTaskDialog()
-                        },
-                        containerColor = Color.White,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    if (!modeName.uppercase().contains("EXAM")) {
+                        FloatingActionButton(
+                            onClick = {
+                                showFabMenu = false
+                                viewModel.openAddTaskDialog()
+                            },
+                            containerColor = Color.White,
+                            modifier = Modifier.padding(bottom = 8.dp)
                         ) {
-                            Icon(Icons.Outlined.Task, contentDescription = null, tint = primaryBlue)
-                            Text("Add Task", color = primaryBlue, fontFamily = Roboto, fontWeight = FontWeight.SemiBold)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Outlined.Task, contentDescription = null, tint = primaryBlue)
+                                Text("Add Task", color = primaryBlue, fontFamily = Roboto, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                     FloatingActionButton(

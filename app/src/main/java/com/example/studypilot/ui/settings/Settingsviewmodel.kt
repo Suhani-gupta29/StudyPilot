@@ -59,16 +59,19 @@ class SettingsViewModel(
                     }
 
                     if (prefs != null) {
+                        val savedName = if (!prefs.displayName.isNullOrBlank()) prefs.displayName else derivedName
                         _uiState.value = _uiState.value.copy(
                             email = email,
-                            displayName = derivedName,
-                            pendingDisplayName = derivedName,
+                            displayName = savedName,
+                            pendingDisplayName = savedName,
                             examDailyStudyHours = prefs.examPreferences.dailyStudyHours,
                             examSessionLength = prefs.examPreferences.sessionLength,
                             focusDailyStudyHours = prefs.focusPreferences.dailyStudyHours,
                             focusSessionLength = prefs.focusPreferences.sessionLength,
                             casualDailyStudyHours = prefs.casualPreferences.dailyStudyHours,
                             casualSessionLength = prefs.casualPreferences.sessionLength,
+                            examDate = prefs.examDate,
+                            examName = prefs.examName,
                             isLoading = false
                         )
                     } else {
@@ -198,7 +201,67 @@ class SettingsViewModel(
             nameError = null
         )
         viewModelScope.launch {
+            try {
+                val authState = authViewModel.authState.value
+                if (authState is AuthState.Authenticated) {
+                    withContext(Dispatchers.IO) {
+                        val currentPrefs = userPreferencesRepository
+                            .getUserPreferences(authState.uid).first()
+                        if (currentPrefs != null) {
+                            userPreferencesRepository.saveUserPreferences(
+                                currentPrefs.copy(
+                                    displayName = name,
+                                    lastAccessed = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "Failed to persist display name", e)
+            }
             _effects.send(SettingsEffect.ShowSnackbar("Name updated"))
+        }
+    }
+
+    // ── Exam date ─────────────────────────────────────────────────────────────
+    fun openExamDateDialog() {
+        _uiState.value = _uiState.value.copy(showExamDateDialog = true)
+    }
+
+    fun cancelExamDateEdit() {
+        _uiState.value = _uiState.value.copy(showExamDateDialog = false)
+    }
+
+    fun saveExamDate(newDateMillis: Long) {
+        _uiState.value = _uiState.value.copy(
+            examDate = newDateMillis,
+            showExamDateDialog = false
+        )
+        viewModelScope.launch {
+            try {
+                val authState = authViewModel.authState.value
+                if (authState is AuthState.Authenticated) {
+                    withContext(Dispatchers.IO) {
+                        val currentPrefs = userPreferencesRepository
+                            .getUserPreferences(authState.uid).first()
+                        if (currentPrefs != null) {
+                            userPreferencesRepository.saveUserPreferences(
+                                currentPrefs.copy(
+                                    examDate = newDateMillis,
+                                    // Reset any "exam over" dialog flag so the user
+                                    // gets re-notified at the correct new date.
+                                    examOverDialogShownForExamDate = null,
+                                    lastAccessed = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsViewModel", "Failed to persist exam date", e)
+            }
+            _effects.send(SettingsEffect.ShowSnackbar("Exam date updated"))
         }
     }
 

@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material3.*
@@ -38,6 +39,9 @@ import com.example.studypilot.ui.mode.FocusSessionLength
 import com.example.studypilot.ui.mode.StudyMode
 import com.example.studypilot.ui.theme.Roboto
 import kotlinx.coroutines.flow.collectLatest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 // ── Colors matching SubjectsScreen exactly ────────────────────────────────────
 private val primaryBlue    = Color(0xFF1E88E5)
@@ -205,6 +209,7 @@ fun SettingsScreen(
                         onFocusSessionLengthChanged = settingsViewModel::onFocusSessionLengthChanged,
                         onCasualHoursChanged = settingsViewModel::onCasualDailyHoursChanged,
                         onCasualSessionLengthChanged = settingsViewModel::onCasualSessionLengthChanged,
+                        onChangeExamDate = settingsViewModel::openExamDateDialog,
                         onSave = settingsViewModel::saveStudyPreferences
                     )
 
@@ -212,6 +217,14 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (state.showExamDateDialog) {
+        ExamDatePickerDialog(
+            currentDateMillis = state.examDate,
+            onConfirm = settingsViewModel::saveExamDate,
+            onDismiss = settingsViewModel::cancelExamDateEdit
+        )
     }
 
     if (state.showNameEditDialog) {
@@ -397,6 +410,7 @@ private fun StudyPreferencesSection(
     onFocusSessionLengthChanged: (FocusSessionLength) -> Unit,
     onCasualHoursChanged: (Float) -> Unit,
     onCasualSessionLengthChanged: (CasualSessionLength) -> Unit,
+    onChangeExamDate: () -> Unit,
     onSave: () -> Unit
 ) {
     val modeEmoji = when (activeMode) {
@@ -438,8 +452,11 @@ private fun StudyPreferencesSection(
                     StudyMode.EXAM -> ExamPrefContent(
                         hours = state.examDailyStudyHours,
                         sessionLength = state.examSessionLength,
+                        examDate = state.examDate,
+                        examName = state.examName,
                         onHoursChanged = onExamHoursChanged,
-                        onSessionLengthChanged = onExamSessionLengthChanged
+                        onSessionLengthChanged = onExamSessionLengthChanged,
+                        onChangeExamDate = onChangeExamDate
                     )
                     StudyMode.FOCUS -> FocusPrefContent(
                         hours = state.focusDailyStudyHours,
@@ -494,10 +511,97 @@ private fun StudyPreferencesSection(
 private fun ExamPrefContent(
     hours: Float,
     sessionLength: ExamSessionLength,
+    examDate: Long?,
+    examName: String?,
     onHoursChanged: (Float) -> Unit,
-    onSessionLengthChanged: (ExamSessionLength) -> Unit
+    onSessionLengthChanged: (ExamSessionLength) -> Unit,
+    onChangeExamDate: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        // ── Exam date row ──────────────────────────────────────────────────
+        val dateLabel = if (examDate != null) {
+            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(examDate))
+        } else {
+            "Not set"
+        }
+        val daysLeft = if (examDate != null) {
+            val diff = examDate - System.currentTimeMillis()
+            val days = (diff / (1000 * 60 * 60 * 24)).toInt()
+            when {
+                days < 0  -> "Exam passed"
+                days == 0 -> "Today!"
+                days == 1 -> "Tomorrow"
+                else      -> "$days days left"
+            }
+        } else null
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "Exam Date",
+                color = textPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                fontFamily = Roboto
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, cardBorder, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onChangeExamDate)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.CalendarMonth,
+                    contentDescription = null,
+                    tint = primaryBlue,
+                    modifier = Modifier.size(20.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (!examName.isNullOrBlank()) examName else "Exam",
+                        color = textSecondary,
+                        fontSize = 11.sp,
+                        fontFamily = Roboto
+                    )
+                    Text(
+                        text = dateLabel,
+                        color = textPrimary,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = Roboto
+                    )
+                }
+                if (daysLeft != null) {
+                    val chipColor = when {
+                        daysLeft == "Exam passed" -> dangerRed
+                        daysLeft == "Today!" || daysLeft == "Tomorrow" -> Color(0xFFF57C00)
+                        else -> primaryBlue
+                    }
+                    Box(
+                        modifier = Modifier
+                            .border(1.dp, chipColor, RoundedCornerShape(20.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = daysLeft,
+                            color = chipColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = Roboto
+                        )
+                    }
+                }
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = "Change exam date",
+                    tint = textSecondary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+
         HoursSlider(hours = hours, onChanged = onHoursChanged, range = 3f..10f, steps = 13)
         ExamSessionLengthPills(selected = sessionLength, onSelected = onSessionLengthChanged)
     }
@@ -811,4 +915,88 @@ private fun SignOutDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
             }
         }
     )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EXAM DATE PICKER DIALOG
+// ══════════════════════════════════════════════════════════════════════════════
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExamDatePickerDialog(
+    currentDateMillis: Long?,
+    onConfirm: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = currentDateMillis
+            ?: (System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000),
+        selectableDates = object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long): Boolean = true
+        }
+    )
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    datePickerState.selectedDateMillis?.let { onConfirm(it) }
+                },
+                enabled = datePickerState.selectedDateMillis != null
+            ) {
+                Text("Confirm", color = primaryBlue, fontWeight = FontWeight.SemiBold, fontFamily = Roboto)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = textSecondary, fontFamily = Roboto)
+            }
+        },
+        colors = DatePickerDefaults.colors(
+            containerColor = cardBackground,
+            titleContentColor = textPrimary,
+            headlineContentColor = textPrimary,
+            weekdayContentColor = textSecondary,
+            subheadContentColor = textSecondary,
+            navigationContentColor = textPrimary,
+            yearContentColor = textPrimary,
+            currentYearContentColor = primaryBlue,
+            selectedYearContainerColor = primaryBlue,
+            selectedYearContentColor = Color.White,
+            dayContentColor = textPrimary,
+            selectedDayContainerColor = primaryBlue,
+            selectedDayContentColor = Color.White,
+            todayContentColor = primaryBlue,
+            todayDateBorderColor = primaryBlue
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        DatePicker(
+            state = datePickerState,
+            title = {
+                Text(
+                    "  Change Exam Date",
+                    modifier = Modifier.padding(start = 24.dp, top = 16.dp),
+                    color = textPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = Roboto,
+                    fontSize = 17.sp
+                )
+            },
+            headline = {
+                val formatted = datePickerState.selectedDateMillis?.let {
+                    SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()).format(Date(it))
+                } ?: "Select a date"
+                Text(
+                    formatted,
+                    modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
+                    color = primaryBlue,
+                    fontFamily = Roboto,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+            },
+            showModeToggle = true
+        )
+    }
 }
