@@ -9,23 +9,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
 
-/**
- * BreakEndWorker
- *
- * A ONE-SHOT WorkManager worker that fires after the user's break duration
- * (read from their break preference) has elapsed.
- *
- * Since your app goes straight back to Home after a session ends, there is
- * no break countdown screen. Instead, we schedule this worker from inside
- * SessionViewModel.endSession() so it fires even if the app is closed.
- *
- * Flow:
- *   Session ends → endSession() called
- *       → scheduleBreakEnd(context, breakMinutes, nextSubject) called
- *           → WorkManager waits N minutes in background
- *               → BreakEndWorker fires notification:
- *                   "Break's over! Ready to start [nextSubject]? Let's go! 💪"
- */
 class BreakEndWorker(
     appContext: Context,
     workerParams: WorkerParameters

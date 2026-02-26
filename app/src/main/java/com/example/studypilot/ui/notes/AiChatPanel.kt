@@ -8,7 +8,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,11 +19,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.studypilot.data.AiMessage
+import com.example.studypilot.data.ImportedContent
 import com.example.studypilot.ui.theme.Roboto
+import kotlinx.coroutines.delay
 
 private val primaryBlue = Color(0xFF1E88E5)
 private val textPrimary = Color(0xFF102A43)
@@ -37,14 +44,18 @@ fun AiChatPanel(
     currentInput: String,
     isLoading: Boolean,
     errorMessage: String?,
+    // ── new parameters (with defaults so existing call-sites still compile) ──
+    chatAttachments: List<ImportedContent> = emptyList(),
     onInputChange: (String) -> Unit,
     onSendMessage: () -> Unit,
     onClose: () -> Unit,
-    onClearError: () -> Unit
+    onClearError: () -> Unit,
+    onAttachFile: () -> Unit = {},
+    onRemoveAttachment: (ImportedContent) -> Unit = {}
 ) {
     val listState = rememberLazyListState()
 
-    // Auto scroll to bottom when new message arrives
+    // Auto-scroll to bottom when new message arrives
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
@@ -60,7 +71,7 @@ fun AiChatPanel(
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
             )
     ) {
-        // Header
+        // ── Header ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -98,17 +109,13 @@ fun AiChatPanel(
             }
 
             IconButton(onClick = onClose) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = "Close",
-                    tint = textSecondary
-                )
+                Icon(Icons.Default.Close, contentDescription = "Close", tint = textSecondary)
             }
         }
 
         Divider(color = softDivider)
 
-        // Error Banner
+        // ── Error banner ──
         if (errorMessage != null) {
             Row(
                 modifier = Modifier
@@ -131,7 +138,7 @@ fun AiChatPanel(
             }
         }
 
-        // Messages List
+        // ── Messages list ──
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -147,21 +154,52 @@ fun AiChatPanel(
 
         Divider(color = softDivider)
 
-        // Input Row
+        // ── Chat attachment chips (queued files for next message) ──
+        if (chatAttachments.isNotEmpty()) {
+            ImportedContentChips(
+                contents = chatAttachments,
+                onRemove = onRemoveAttachment,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Divider(color = softDivider)
+        }
+
+        // ── Input row ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            // 📎 Attach file button
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Color(0xFFE3F2FD), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                IconButton(onClick = onAttachFile) {
+                    Icon(
+                        Icons.Default.AttachFile,
+                        contentDescription = "Attach PDF or image",
+                        tint = primaryBlue,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            // Text input
             TextField(
                 value = currentInput,
                 onValueChange = onInputChange,
                 modifier = Modifier.weight(1f),
                 placeholder = {
                     Text(
-                        "Ask about $subjectName...",
+                        if (chatAttachments.isNotEmpty())
+                            "Ask about the attached file…"
+                        else
+                            "Ask about $subjectName…",
                         fontFamily = Roboto,
                         fontSize = 14.sp,
                         color = textSecondary
@@ -181,12 +219,12 @@ fun AiChatPanel(
                 )
             )
 
-            // Send Button
+            // Send button
             Box(
                 modifier = Modifier
                     .size(44.dp)
                     .background(
-                        color = if (currentInput.isNotBlank() && !isLoading)
+                        color = if ((currentInput.isNotBlank() || chatAttachments.isNotEmpty()) && !isLoading)
                             primaryBlue else Color(0xFFE0E7F1),
                         shape = CircleShape
                     ),
@@ -201,12 +239,12 @@ fun AiChatPanel(
                 } else {
                     IconButton(
                         onClick = onSendMessage,
-                        enabled = currentInput.isNotBlank()
+                        enabled = currentInput.isNotBlank() || chatAttachments.isNotEmpty()
                     ) {
                         Icon(
                             Icons.Default.Send,
                             contentDescription = "Send",
-                            tint = if (currentInput.isNotBlank())
+                            tint = if (currentInput.isNotBlank() || chatAttachments.isNotEmpty())
                                 Color.White else textSecondary,
                             modifier = Modifier.size(20.dp)
                         )
@@ -215,7 +253,6 @@ fun AiChatPanel(
             }
         }
 
-        // Bottom spacing for navigation bar
         Spacer(modifier = Modifier.height(8.dp))
     }
 }
@@ -223,13 +260,16 @@ fun AiChatPanel(
 @Composable
 private fun ChatMessageBubble(message: AiMessage) {
     val isUser = message.role == "user"
+    val clipboardManager = LocalClipboardManager.current
+    // Tracks whether the ✓ "copied" state is showing
+    var copied by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
+        // 🤖 avatar (AI only)
         if (!isUser) {
-            // AI Avatar
             Box(
                 modifier = Modifier
                     .size(28.dp)
@@ -241,44 +281,90 @@ private fun ChatMessageBubble(message: AiMessage) {
             Spacer(modifier = Modifier.width(6.dp))
         }
 
-        Box(
-            modifier = Modifier
-                .widthIn(max = 260.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = if (isUser) 16.dp else 4.dp,
-                        topEnd = if (isUser) 4.dp else 16.dp,
-                        bottomStart = 16.dp,
-                        bottomEnd = 16.dp
+        // Bubble + copy button stacked in a Column (AI only)
+        Column(horizontalAlignment = Alignment.Start) {
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 260.dp)
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = if (isUser) 16.dp else 4.dp,
+                            topEnd = if (isUser) 4.dp else 16.dp,
+                            bottomStart = 16.dp,
+                            bottomEnd = 16.dp
+                        )
                     )
-                )
-                .background(if (isUser) userBubble else aiBubble)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            if (message.isLoading) {
+                    .background(if (isUser) userBubble else aiBubble)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                if (message.isLoading) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        repeat(3) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .background(textSecondary, CircleShape)
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        text = message.content,
+                        fontSize = 14.sp,
+                        color = if (isUser) Color.White else textPrimary,
+                        fontFamily = Roboto,
+                        lineHeight = 20.sp
+                    )
+                }
+            }
+
+            // Copy button — shown only for finished AI messages
+            if (!isUser && !message.isLoading) {
+                Spacer(modifier = Modifier.height(2.dp))
+                // Reset the "copied" tick after 2 seconds
+                LaunchedEffect(copied) {
+                    if (copied) {
+                        delay(2000)
+                        copied = false
+                    }
+                }
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Transparent)
                 ) {
-                    repeat(3) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(textSecondary, CircleShape)
+                    IconButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(message.content))
+                            copied = true
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                            contentDescription = if (copied) "Copied" else "Copy response",
+                            tint = if (copied) Color(0xFF4CAF50) else textSecondary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    if (copied) {
+                        Text(
+                            text = "Copied!",
+                            fontSize = 10.sp,
+                            color = Color(0xFF4CAF50),
+                            fontFamily = Roboto
                         )
                     }
                 }
-            } else {
-                Text(
-                    text = message.content,
-                    fontSize = 14.sp,
-                    color = if (isUser) Color.White else textPrimary,
-                    fontFamily = Roboto,
-                    lineHeight = 20.sp
-                )
             }
         }
 
+        // 👤 avatar (user only)
         if (isUser) {
             Spacer(modifier = Modifier.width(6.dp))
             Box(
