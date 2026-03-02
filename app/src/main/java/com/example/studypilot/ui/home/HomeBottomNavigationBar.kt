@@ -28,6 +28,7 @@ fun HomeBottomNavigationBar(
     onNavigateToPlanner: () -> Unit,
     onNavigateToSubjects: () -> Unit,
     onNavigateToHome: () -> Unit = {},
+
     activeIndex: Int
 ) {
     val items = listOf("Home", "Planner", "Subjects", "Analytics", "Settings")

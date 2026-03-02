@@ -45,10 +45,6 @@ class StudyPilotApplication : Application() {
         StudyPilotNotificationManager.createChannels(this)
         // ─────────────────────────────────────────────────────────────────────
 
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            StudyPilotNotificationManager.notifySessionComplete(this, 5)
-        }, 3000)
-
         // Initialize Firebase on background thread
         applicationScope.launch(Dispatchers.IO) {
             try {

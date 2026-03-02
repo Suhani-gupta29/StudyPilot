@@ -40,12 +40,12 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private val primaryBlue = Color(0xFF1E88E5)
-private val lightBlue = Color(0xFF90CAF9)
-private val softBlueTint = Color(0xFFE3F2FD)
-private val textDarkBlue = Color(0xFF0D47A1)
-private val dividerBlue = Color(0xFFBBDEFB)
-private val gradientTop = Color(0xFFE3F2FD)
-private val gradientBottom = Color(0xFFFFFFFF)
+private val lightBlue = Color(0xFF0861C4)
+private val softBlueTint = Color(0xFFEAF3FB)
+private val textDarkBlue = Color(0xFF0861C4)
+private val dividerBlue = Color(0xFFCBD5E1)
+private val gradientTop = Color(0xFFDBE9FF)
+private val gradientBottom = Color(0xFF9ECFFA)
 private val gradientButtonStart = Color(0xFF1E88E5)
 private val gradientButtonEnd = Color(0xFF1565C0)
 private val inputBackground = Color(0xFFF5FAFF)

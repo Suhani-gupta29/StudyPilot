@@ -39,13 +39,16 @@ import com.example.studypilot.ui.shared.Effort
 // Colors
 private val primaryBlue = Color(0xFF1E88E5)
 private val mainBackground = Color(0xFFFFFFFF)
-private val gradientTop = Color(0xFFE3F2FD)
+private val gradientTop = Color(0xFFD6ECFB)
 private val gradientBottom = Color(0xFFFFFFFF)
 private val cardBackground = Color(0xFFFFFFFF)
-private val cardBorder = Color(0xFFE0E7F1)
-private val textPrimary = Color(0xFF102A43)
-private val textSecondary = Color(0xFF627D98)
-private val softDivider = Color(0xFFE6ECF5)
+private val cardBorder = Color(0xFFCBD5E1)
+private val textPrimary = Color(0xFF0A2540)
+private val textSecondary = Color(0xFF1E3A5F)
+private val softDivider = Color(0xFFE2EAF4)
+private val dialogBg = Color(0xFFFFFFFF)
+private val chipUnselectedBg = Color(0xFFEAF3FB)
+private val chipUnselectedText = Color(0xFF0A2540)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -281,8 +284,12 @@ fun SubjectsScreen(
 
         AlertDialog(
             onDismissRequest = { viewModel.closeAddDialog() },
+            containerColor = dialogBg,
+            titleContentColor = textPrimary,
+            textContentColor = textPrimary,
+            shape = RoundedCornerShape(20.dp),
             title = {
-                Text("Add Subject", fontFamily = Roboto, fontWeight = FontWeight.Bold)
+                Text("Add Subject", fontFamily = Roboto, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -291,18 +298,22 @@ fun SubjectsScreen(
                     OutlinedTextField(
                         value = subjectName,
                         onValueChange = { subjectName = it },
-                        label = { Text("Subject name", fontFamily = Roboto) },
+                        label = { Text("Subject name", fontFamily = Roboto, color = textSecondary) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = primaryBlue,
-                            unfocusedBorderColor = cardBorder
+                            unfocusedBorderColor = cardBorder,
+                            focusedTextColor = textPrimary,
+                            unfocusedTextColor = textPrimary,
+                            focusedContainerColor = Color(0xFFF5FAFF),
+                            unfocusedContainerColor = Color(0xFFF5FAFF)
                         ),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     )
 
                     // Priority
-                    Text("Priority", fontSize = 13.sp, color = textSecondary, fontFamily = Roboto)
+                    Text("Priority", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = textPrimary, fontFamily = Roboto)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(Priority.High, Priority.Medium, Priority.Low).forEach { p ->
                             FilterChip(
@@ -310,6 +321,8 @@ fun SubjectsScreen(
                                 onClick = { selectedPriority = p },
                                 label = { Text(p.name, fontFamily = Roboto, fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = chipUnselectedBg,
+                                    labelColor = chipUnselectedText,
                                     selectedContainerColor = primaryBlue,
                                     selectedLabelColor = Color.White
                                 )
@@ -318,7 +331,7 @@ fun SubjectsScreen(
                     }
 
                     // Difficulty
-                    Text("Difficulty", fontSize = 13.sp, color = textSecondary, fontFamily = Roboto)
+                    Text("Difficulty", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = textPrimary, fontFamily = Roboto)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(Difficulty.Hard, Difficulty.Medium, Difficulty.Easy).forEach { d ->
                             FilterChip(
@@ -326,6 +339,8 @@ fun SubjectsScreen(
                                 onClick = { selectedDifficulty = d },
                                 label = { Text(d.name, fontFamily = Roboto, fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = chipUnselectedBg,
+                                    labelColor = chipUnselectedText,
                                     selectedContainerColor = primaryBlue,
                                     selectedLabelColor = Color.White
                                 )
@@ -343,12 +358,12 @@ fun SubjectsScreen(
                         }
                     }
                 ) {
-                    Text("Add", color = primaryBlue, fontFamily = Roboto, fontWeight = FontWeight.SemiBold)
+                    Text("Add", color = primaryBlue, fontFamily = Roboto, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.closeAddDialog() }) {
-                    Text("Cancel", fontFamily = Roboto)
+                    Text("Cancel", color = textSecondary, fontFamily = Roboto)
                 }
             }
         )
@@ -363,8 +378,12 @@ fun SubjectsScreen(
 
         AlertDialog(
             onDismissRequest = { viewModel.closeAddTaskDialog() },
+            containerColor = dialogBg,
+            titleContentColor = textPrimary,
+            textContentColor = textPrimary,
+            shape = RoundedCornerShape(20.dp),
             title = {
-                Text("Add Task", fontFamily = Roboto, fontWeight = FontWeight.Bold)
+                Text("Add Task", fontFamily = Roboto, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -379,32 +398,44 @@ fun SubjectsScreen(
                     OutlinedTextField(
                         value = taskName,
                         onValueChange = { taskName = it },
-                        label = { Text("Task name", fontFamily = Roboto) },
+                        label = { Text("Task name", fontFamily = Roboto, color = textSecondary) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = primaryBlue,
-                            unfocusedBorderColor = cardBorder
+                            unfocusedBorderColor = cardBorder,
+                            focusedTextColor = textPrimary,
+                            unfocusedTextColor = textPrimary,
+                            focusedContainerColor = Color(0xFFF5FAFF),
+                            unfocusedContainerColor = Color(0xFFF5FAFF)
                         ),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     )
 
                     OutlinedTextField(
                         value = relatedSubject,
                         onValueChange = { relatedSubject = it },
-                        label = { Text("Related subject (optional)", fontFamily = Roboto) },
+                        label = { Text("Related subject (optional)", fontFamily = Roboto, color = textSecondary) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = primaryBlue,
-                            unfocusedBorderColor = cardBorder
+                            unfocusedBorderColor = cardBorder,
+                            focusedTextColor = textPrimary,
+                            unfocusedTextColor = textPrimary,
+                            focusedContainerColor = Color(0xFFF5FAFF),
+                            unfocusedContainerColor = Color(0xFFF5FAFF)
                         ),
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     )
 
                     val context = androidx.compose.ui.platform.LocalContext.current
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF5FAFF), RoundedCornerShape(12.dp))
+                            .border(1.dp, cardBorder, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -437,20 +468,22 @@ fun SubjectsScreen(
                                 ).show()
                             }
                         ) {
-                            Text("Pick Date", color = primaryBlue, fontFamily = Roboto)
+                            Text("Pick Date", color = primaryBlue, fontFamily = Roboto, fontWeight = FontWeight.SemiBold)
                         }
                     }
 
                     // Only show Type and Effort for FOCUS mode
                     if (currentMode == StudyMode.FOCUS) {
-                        Text("Type", fontSize = 13.sp, color = textSecondary, fontFamily = Roboto)
+                        Text("Type", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = textPrimary, fontFamily = Roboto)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TaskType.entries.forEach { type ->
                                 FilterChip(
                                     selected = selectedType == type,
                                     onClick = { selectedType = type },
-                                    label = { Text(type.name, fontFamily = Roboto, fontSize = 12.sp) },
+                                    label = { Text(type.name.lowercase().replaceFirstChar { it.uppercase() }, fontFamily = Roboto, fontSize = 12.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
+                                        containerColor = chipUnselectedBg,
+                                        labelColor = chipUnselectedText,
                                         selectedContainerColor = primaryBlue,
                                         selectedLabelColor = Color.White
                                     )
@@ -458,7 +491,7 @@ fun SubjectsScreen(
                             }
                         }
 
-                        Text("Effort", fontSize = 13.sp, color = textSecondary, fontFamily = Roboto)
+                        Text("Effort", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = textPrimary, fontFamily = Roboto)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Effort.entries.forEach { effort ->
                                 FilterChip(
@@ -466,6 +499,8 @@ fun SubjectsScreen(
                                     onClick = { selectedEffort = effort },
                                     label = { Text(effort.name, fontFamily = Roboto, fontSize = 12.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
+                                        containerColor = chipUnselectedBg,
+                                        labelColor = chipUnselectedText,
                                         selectedContainerColor = primaryBlue,
                                         selectedLabelColor = Color.White
                                     )
@@ -491,12 +526,12 @@ fun SubjectsScreen(
                         }
                     }
                 ) {
-                    Text("Add", color = primaryBlue, fontFamily = Roboto, fontWeight = FontWeight.SemiBold)
+                    Text("Add", color = primaryBlue, fontFamily = Roboto, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.closeAddTaskDialog() }) {
-                    Text("Cancel", fontFamily = Roboto)
+                    Text("Cancel", color = textSecondary, fontFamily = Roboto)
                 }
             }
         )
@@ -554,6 +589,8 @@ private fun FilterChips(
                 onClick = { onFilterSelected(SubjectFilter.ALL) },
                 label = { Text("All", fontFamily = Roboto) },
                 colors = FilterChipDefaults.filterChipColors(
+                    containerColor = chipUnselectedBg,
+                    labelColor = chipUnselectedText,
                     selectedContainerColor = primaryBlue,
                     selectedLabelColor = Color.White
                 )
@@ -565,6 +602,8 @@ private fun FilterChips(
                 onClick = { onFilterSelected(SubjectFilter.HIGH_PRIORITY) },
                 label = { Text("High Priority", fontFamily = Roboto) },
                 colors = FilterChipDefaults.filterChipColors(
+                    containerColor = chipUnselectedBg,
+                    labelColor = chipUnselectedText,
                     selectedContainerColor = primaryBlue,
                     selectedLabelColor = Color.White
                 )
@@ -576,6 +615,8 @@ private fun FilterChips(
                 onClick = { onFilterSelected(SubjectFilter.HARD) },
                 label = { Text("Hard", fontFamily = Roboto) },
                 colors = FilterChipDefaults.filterChipColors(
+                    containerColor = chipUnselectedBg,
+                    labelColor = chipUnselectedText,
                     selectedContainerColor = primaryBlue,
                     selectedLabelColor = Color.White
                 )
@@ -587,6 +628,8 @@ private fun FilterChips(
                 onClick = { onFilterSelected(SubjectFilter.MEDIUM) },
                 label = { Text("Medium", fontFamily = Roboto) },
                 colors = FilterChipDefaults.filterChipColors(
+                    containerColor = chipUnselectedBg,
+                    labelColor = chipUnselectedText,
                     selectedContainerColor = primaryBlue,
                     selectedLabelColor = Color.White
                 )
@@ -598,6 +641,8 @@ private fun FilterChips(
                 onClick = { onFilterSelected(SubjectFilter.EASY) },
                 label = { Text("Easy", fontFamily = Roboto) },
                 colors = FilterChipDefaults.filterChipColors(
+                    containerColor = chipUnselectedBg,
+                    labelColor = chipUnselectedText,
                     selectedContainerColor = primaryBlue,
                     selectedLabelColor = Color.White
                 )
@@ -610,6 +655,8 @@ private fun FilterChips(
                 onClick = { onFilterSelected(SubjectFilter.WEAK) },
                 label = { Text("⚠️ Weak", fontFamily = Roboto) },
                 colors = FilterChipDefaults.filterChipColors(
+                    containerColor = Color(0xFFFFEBEE),
+                    labelColor = Color(0xFFD32F2F),
                     selectedContainerColor = Color(0xFFD32F2F),
                     selectedLabelColor = Color.White
                 )
@@ -740,7 +787,7 @@ private fun SubjectCard(
             }
 
 
-           // Priority
+            // Priority
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -848,17 +895,23 @@ private fun SubjectCard(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
+            containerColor = dialogBg,
+            titleContentColor = textPrimary,
+            textContentColor = textSecondary,
+            shape = RoundedCornerShape(20.dp),
             title = {
                 Text(
                     "Delete Subject?",
                     fontFamily = Roboto,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
                 )
             },
             text = {
                 Text(
                     "Are you sure you want to delete '${subject.name}'? This action cannot be undone.",
-                    fontFamily = Roboto
+                    fontFamily = Roboto,
+                    fontSize = 14.sp
                 )
             },
             confirmButton = {
@@ -868,12 +921,12 @@ private fun SubjectCard(
                         showDeleteDialog = false
                     }
                 ) {
-                    Text("Delete", color = Color(0xFFD32F2F), fontFamily = Roboto)
+                    Text("Delete", color = Color(0xFFD32F2F), fontFamily = Roboto, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("Cancel", fontFamily = Roboto)
+                    Text("Cancel", color = textSecondary, fontFamily = Roboto)
                 }
             }
         )

@@ -45,12 +45,12 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private val primaryBlue = Color(0xFF1E88E5)
-private val lightBlue = Color(0xFF90CAF9)
-private val softBlueTint = Color(0xFFE3F2FD)
-private val textDarkBlue = Color(0xFF0D47A1)
-private val dividerBlue = Color(0xFFBBDEFB)
-private val gradientTop = Color(0xFFE3F2FD)
-private val gradientBottom = Color(0xFFFFFFFF)
+private val lightBlue = Color(0xFF0861C4)
+private val softBlueTint = Color(0xFFEAF3FB)
+private val textDarkBlue = Color(0xFF0861C4)
+private val dividerBlue = Color(0xFFCBD5E1)
+private val gradientTop = Color(0xFFDBE9FF)
+private val gradientBottom = Color(0xFF9ECFFA)
 private val gradientButtonStart = Color(0xFF1E88E5)
 private val gradientButtonEnd = Color(0xFF1565C0)
 private val inputBackground = Color(0xFFF5FAFF)
@@ -379,9 +379,9 @@ private fun FocusTaskCard(
             Box(modifier = Modifier.weight(1f)) {
                 Dropdown(
                     label = "Task Type",
-                    items = TaskType.values().map { it.name },
-                    selectedValue = task.type.name,
-                    onItemSelected = { viewModel.onTaskTypeChange(index, TaskType.valueOf(it)) }
+                    items = TaskType.values().map { it.name.lowercase().replaceFirstChar { c -> c.uppercase() } },
+                    selectedValue = task.type.name.lowercase().replaceFirstChar { c -> c.uppercase() },
+                    onItemSelected = { viewModel.onTaskTypeChange(index, TaskType.valueOf(it.uppercase())) }
                 )
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -440,13 +440,12 @@ private fun FocusTaskCard(
         Spacer(modifier = Modifier.height(16.dp))
 
         // Subject Dropdown
-        val subjectNames = subjects.map { it.name }.filter { it.isNotBlank() }
+        val subjectNames = listOf("None") + subjects.map { it.name }.filter { it.isNotBlank() }
         if (subjectNames.isNotEmpty()) {
             Dropdown(
                 label = "Related Subject",
                 items = subjectNames,
-                selectedValue = task.relatedSubject?.takeIf { subjectNames.contains(it) }
-                    ?: subjectNames.first(),
+                selectedValue = task.relatedSubject?.takeIf { subjectNames.contains(it) } ?: "None",
                 onItemSelected = { viewModel.onTaskSubjectChange(index, it) }
             )
         }
@@ -499,7 +498,7 @@ private fun BottomActionBar(
                             colors = if (isContinueEnabled) listOf(
                                 gradientButtonStart,
                                 gradientButtonEnd
-                            ) else listOf(lightBlue, lightBlue)
+                            ) else listOf(Color(0xFFB0CDE8), Color(0xFFB0CDE8))
                         )
                     ),
                 contentAlignment = Alignment.Center
@@ -536,8 +535,8 @@ fun CustomTextField(
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = borderColor,
             unfocusedBorderColor = borderColor,
-            focusedTextColor = Color.Black,
-            unfocusedTextColor = Color.Black,
+            focusedTextColor = Color(0xFF0A2540),       // add this
+            unfocusedTextColor = Color(0xFF0A2540),
             cursorColor = primaryBlue,
             focusedContainerColor = inputBackground,
             unfocusedContainerColor = inputBackground,
@@ -566,6 +565,7 @@ fun Dropdown(
             value = selectedValue,
             onValueChange = {},
             readOnly = true,
+            singleLine = true,
             label = { Text(label, color = textDarkBlue) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
@@ -585,16 +585,25 @@ fun Dropdown(
         )
         ExposedDropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(Color.White)
         ) {
             items.forEach { item ->
                 DropdownMenuItem(
-                    text = { Text(item) },
+                    text = { Text(item, color = Color(0xFF0A2540), fontSize = 15.sp) },
                     onClick = {
                         Log.d("FocusUI-debug", "Dropdown '$label' selected: $item")
                         onItemSelected(item)
                         expanded = false
-                    }
+                    },
+                    colors = MenuItemColors(
+                        textColor = Color(0xFF0A2540),
+                        leadingIconColor = Color(0xFF0A2540),
+                        trailingIconColor = Color(0xFF0A2540),
+                        disabledTextColor = Color(0xFF0A2540).copy(alpha = 0.4f),
+                        disabledLeadingIconColor = Color.Transparent,
+                        disabledTrailingIconColor = Color.Transparent
+                    )
                 )
             }
         }

@@ -39,6 +39,7 @@ import com.example.studypilot.R
 import com.example.studypilot.ui.shared.SessionStatus
 import com.example.studypilot.ui.shared.StudySession
 import com.example.studypilot.ui.theme.Roboto
+import androidx.compose.material.icons.filled.Chat
 
 // --- Strict Color System ---
 private val primaryBlue = Color(0xFF1E88E5)
@@ -77,6 +78,7 @@ fun HomeScreenExam(
     onNavigateToAnalytics: () -> Unit,
     onNavigateToPlanner: () -> Unit,
     onNavigateToSubjects: () -> Unit,
+    onNavigateToRooms: () -> Unit = {},
     onEnterSwapMode: () -> Unit,
     onCancelSwap: () -> Unit,
     onSaveSwap: () -> Unit,
@@ -138,6 +140,21 @@ fun HomeScreenExam(
                 onNavigateToSubjects = onNavigateToSubjects,
                 activeIndex = 0
             )
+        },
+        floatingActionButton = {                          // ← ADD THIS
+            FloatingActionButton(
+                onClick = onNavigateToRooms,
+                containerColor = primaryBlue,
+                shape = CircleShape,
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Chat,
+                    contentDescription = "Study Rooms",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     ) { paddingValues ->
         Box(

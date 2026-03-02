@@ -25,7 +25,11 @@ class SessionViewModel(
     private val repository: SessionRepository,
     // ── ADD these 4 new parameters ───────────────────────────────────────────
     private val context: Context,
-    private val breakDurationMinutes: Int = 1,         // from user's break preference
+    private val breakDurationMinutes: Int = when (mode.uppercase()) {
+        "EXAM" -> 10
+        "FOCUS" -> 20
+        else -> 30
+    },         // from user's break preference
     private val nextSessionSubject: String = subject,  // next session in today's plan
     private val longestSessionEverSeconds: Int = 0     // from analytics, for personal best
     // ─────────────────────────────────────────────────────────────────────────

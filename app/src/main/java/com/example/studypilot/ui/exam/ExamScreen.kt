@@ -42,12 +42,12 @@ import java.util.*
 
 // --- New Color System ---
 private val primaryBlue = Color(0xFF1E88E5)
-private val lightBlue = Color(0xFF90CAF9)
-private val softBlueTint = Color(0xFFE3F2FD)
-private val textDarkBlue = Color(0xFF0D47A1)
-private val dividerBlue = Color(0xFFBBDEFB)
-private val gradientTop = Color(0xFFE3F2FD)
-private val gradientBottom = Color(0xFFFFFFFF)
+private val lightBlue = Color(0xFF0861C4)
+private val softBlueTint = Color(0xFFEAF3FB)
+private val textDarkBlue = Color(0xFF0861C4)
+private val dividerBlue = Color(0xFFCBD5E1)
+private val gradientTop = Color(0xFFDBE9FF)
+private val gradientBottom = Color(0xFF9ECFFA)
 private val gradientButtonStart = Color(0xFF1E88E5)
 private val gradientButtonEnd = Color(0xFF1565C0)
 private val inputBackground = Color(0xFFF5FAFF)
@@ -317,16 +317,25 @@ fun Dropdown(
         )
         ExposedDropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(Color.White)
         ) {
             items.forEach { item ->
                 DropdownMenuItem(
-                    text = { Text(item) },
+                    text = { Text(item, color = Color(0xFF0A2540), fontSize = 15.sp) },
                     onClick = {
                         Log.d("ExamUI-debug", "Dropdown '$label' selected: $item")
                         onItemSelected(item)
                         expanded = false
-                    }
+                    },
+                    colors = MenuItemColors(
+                        textColor = Color(0xFF0A2540),
+                        leadingIconColor = Color(0xFF0A2540),
+                        trailingIconColor = Color(0xFF0A2540),
+                        disabledTextColor = Color(0xFF0A2540).copy(alpha = 0.4f),
+                        disabledLeadingIconColor = Color.Transparent,
+                        disabledTrailingIconColor = Color.Transparent
+                    )
                 )
             }
         }
@@ -366,13 +375,13 @@ private fun BottomButtons(
                 .weight(1f)
                 .height(56.dp),
             shape = RoundedCornerShape(50),
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, disabledContainerColor = lightBlue),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, disabledContainerColor = Color(0xFFB0CDE8)),
             contentPadding = PaddingValues()
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Brush.horizontalGradient(colors = if(isContinueEnabled) listOf(gradientButtonStart, gradientButtonEnd) else listOf(lightBlue, lightBlue))),
+                    .background(Brush.horizontalGradient(colors = if(isContinueEnabled) listOf(gradientButtonStart, gradientButtonEnd) else listOf(Color(0xFFB0CDE8), Color(0xFFB0CDE8)))),
                 contentAlignment = Alignment.Center
             ) {
                 Text("Continue", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)

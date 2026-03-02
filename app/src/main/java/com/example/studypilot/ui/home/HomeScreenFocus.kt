@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.AssignmentTurnedIn
 import androidx.compose.ui.text.style.TextAlign
 import com.example.studypilot.ui.casual.CasualTask
+import androidx.compose.material.icons.filled.Chat
 
 // --- Strict Color System ---
 private val primaryBlue = Color(0xFF1E88E5)
@@ -69,6 +70,7 @@ fun HomeScreenFocus(
     onNavigateToAnalytics: () -> Unit,
     onNavigateToPlanner: () -> Unit,
     onNavigateToSubjects: () -> Unit,
+    onNavigateToRooms: () -> Unit = {},
     onEnterSwapMode: () -> Unit,
     onCancelSwap: () -> Unit,
     onSaveSwap: () -> Unit,
@@ -129,6 +131,21 @@ fun HomeScreenFocus(
                 onNavigateToSubjects = onNavigateToSubjects,
                 activeIndex = 0
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onNavigateToRooms,
+                containerColor = primaryBlue,
+                shape = CircleShape,
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Chat,
+                    contentDescription = "Study Rooms",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     ) { paddingValues ->
         Box(

@@ -60,12 +60,40 @@ import com.example.studypilot.ui.subjects.SubjectsViewModel
 import com.example.studypilot.ui.subjects.SubjectsViewModelFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.example.studypilot.notifications.NotificationScheduler
+import com.example.studypilot.ui.chat.ChatViewModel
+import com.example.studypilot.ui.chat.ChatViewModelFactory
+import com.example.studypilot.ui.chat.Room
+import com.example.studypilot.ui.chat.RoomDirectoryScreen
+import com.example.studypilot.ui.chat.ChatScreen
 
 
 class MainActivity : ComponentActivity() {
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        // Optional: show a rationale snackbar if !isGranted
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Request POST_NOTIFICATIONS permission on Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
 
         setContent {
             StudyPilotTheme {
@@ -96,10 +124,41 @@ fun StudyPilotApp() {
     // FirebaseAuth instance - lightweight, safe to create
     val firebaseAuth = remember { FirebaseAuth.getInstance() }
 
+    val authState by authViewModel.authState.collectAsState()
+
+    LaunchedEffect(authState) {
+        when (val state = authState) {
+            is AuthState.Authenticated -> NotificationScheduler.scheduleAll(context, state.uid)
+            is AuthState.Unauthenticated -> NotificationScheduler.cancelAll(context)
+            else -> {}
+        }
+    }
+
     // 🚨 CRITICAL FIX: Create HomeViewModel ONCE at NavHost level
     // This ensures it survives navigation and Flow collectors stay alive
     val homeViewModel: HomeViewModel = viewModel(
         factory = HomeViewModelFactory(userPreferencesRepository, authViewModel, sessionRepository)
+    )
+
+
+    val currentUser = firebaseAuth.currentUser
+    val currentUserId = currentUser?.uid ?: ""
+
+// Collect displayName from UserPreferences (set in Settings screen)
+    val userPrefsState = userPreferencesRepository
+        .getUserPreferences(currentUserId)
+        .collectAsState(initial = null)
+
+    val displayName = userPrefsState.value?.displayName
+        ?.takeIf { it.isNotBlank() }
+        ?: currentUser?.email?.substringBefore("@")
+        ?: "User"
+
+    val chatViewModel: ChatViewModel = viewModel(
+        factory = ChatViewModelFactory(
+            userId   = currentUserId,
+            userName = displayName
+        )
     )
 
     NavHost(navController = navController, startDestination = "splash") {
@@ -266,6 +325,7 @@ fun StudyPilotApp() {
                 onNavigateToAnalytics = { navController.navigate("analytics") },
                 onNavigateToPlanner = { navController.navigate("planner") },
                 onNavigateToSubjects = { navController.navigate("subjects") },
+                onNavigateToRooms     = { navController.navigate("rooms") },
                 onNavigateToFocusSetup = { navController.navigate("focusSetup") },
                 onNavigateToCasualSetup = {
                     navController.navigate("casualSetup")
@@ -300,6 +360,7 @@ fun StudyPilotApp() {
                 onNavigateToAnalytics = { navController.navigate("analytics") },
                 onNavigateToPlanner = { navController.navigate("planner") },
                 onNavigateToSubjects = { navController.navigate("subjects") },
+                onNavigateToRooms     = { navController.navigate("rooms") },
                 onEnterSwapMode = { homeViewModel.enterSwapMode() },
                 onCancelSwap = { homeViewModel.cancelSwap() },
                 onSaveSwap = { homeViewModel.saveSwap() },
@@ -547,6 +608,40 @@ fun StudyPilotApp() {
                 onNotesClick = { sessionId ->
                     navController.navigate("notes/$userId/$subject/$mode?sessionId=$sessionId")
                 }
+            )
+        }
+
+        // ── Room Directory ────────────────────────────────────────────────────────
+        composable("rooms") {
+            RoomDirectoryScreen(
+                viewModel = chatViewModel,
+                onNavigateToChat = { room ->
+                    navController.navigate("chat/${room.id}/${room.name}/${room.memberCount}")
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+// ── Chat Screen ───────────────────────────────────────────────────────────
+        composable(
+            route = "chat/{roomId}/{roomName}/{memberCount}",
+            arguments = listOf(
+                navArgument("roomId")      { type = NavType.StringType },
+                navArgument("roomName")    { type = NavType.StringType },
+                navArgument("memberCount") { type = NavType.IntType }
+            )
+        ) { backStackEntry ->
+            val roomId      = backStackEntry.arguments?.getString("roomId") ?: ""
+            val roomName    = backStackEntry.arguments?.getString("roomName") ?: ""
+            val memberCount = backStackEntry.arguments?.getInt("memberCount") ?: 0
+            val authState by authViewModel.authState.collectAsState()
+            val userId = (authState as? AuthState.Authenticated)?.uid ?: ""
+
+            ChatScreen(
+                viewModel     = chatViewModel,
+                room          = Room(id = roomId, name = roomName, memberCount = memberCount),
+                currentUserId = userId,
+                onBack        = { navController.popBackStack() }
             )
         }
     }

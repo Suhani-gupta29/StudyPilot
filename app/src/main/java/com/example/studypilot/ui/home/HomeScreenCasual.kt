@@ -48,6 +48,7 @@ import com.example.studypilot.ui.theme.Roboto
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.material.icons.filled.Chat
 
 private val primaryBlue = Color(0xFF1E88E5)
 private val mainBackground = Color(0xFFFFFFFF)
@@ -86,6 +87,7 @@ fun HomeScreenCasual(
     onNavigateToAnalytics: () -> Unit,
     onNavigateToPlanner: () -> Unit,
     onNavigateToSubjects: () -> Unit,
+    onNavigateToRooms: () -> Unit = {},
     onEnterSwapMode: () -> Unit,
     onCancelSwap: () -> Unit,
     onSaveSwap: () -> Unit,
@@ -166,6 +168,21 @@ fun HomeScreenCasual(
                 onNavigateToSubjects = onNavigateToSubjects,
                 activeIndex = 0
             )
+        },
+        floatingActionButton = {                          // ← ADD THIS
+            FloatingActionButton(
+                onClick = onNavigateToRooms,
+                containerColor = primaryBlue,
+                shape = CircleShape,
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Chat,
+                    contentDescription = "Study Rooms",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     ) { paddingValues ->
         Box(
@@ -276,6 +293,7 @@ private fun CasualTopAppBar() {
                     fontFamily = Roboto
                 )
             },
+            // Replace actions block with:
             actions = {
                 Box(
                     modifier = Modifier
