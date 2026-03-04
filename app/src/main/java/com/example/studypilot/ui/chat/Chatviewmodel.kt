@@ -2,6 +2,7 @@ package com.example.studypilot.ui.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,6 +38,19 @@ class ChatViewModel(
     private val userId: String,
     private val userName: String
 ) : ViewModel() {
+
+    // Always get the current logged-in user fresh from FirebaseAuth
+    private val currentUserId get() = FirebaseAuth.getInstance().currentUser?.uid ?: userId
+    private val currentUserName: String
+        get() {
+            val user = FirebaseAuth.getInstance().currentUser
+            return when {
+                !user?.displayName.isNullOrBlank() -> user!!.displayName!!
+                !user?.email.isNullOrBlank() -> user!!.email!!.substringBefore("@")
+                !userName.isBlank() -> userName
+                else -> user?.uid?.take(6) ?: "User"
+            }
+        }
 
     // Directory state
     private val _directoryState = MutableStateFlow(RoomDirectoryUiState())
@@ -128,8 +142,8 @@ class ChatViewModel(
             name          = state.createName.trim(),
             description   = state.createDescription.trim(),
             subject       = state.createSubject,
-            createdByUid  = userId,
-            createdByName = userName,
+            createdByUid  = currentUserId,
+            createdByName = currentUserName,
             onSuccess     = { roomId ->
                 _directoryState.update { it.copy(isCreating = false) }
                 hideCreateDialog()
@@ -144,17 +158,33 @@ class ChatViewModel(
     }
 
     fun joinRoom(roomId: String) {
-        repository.joinRoom(roomId, userId)
+        repository.joinRoom(roomId, currentUserId)
+        // Update the room in directory state so it reflects membership immediately
+        _directoryState.update { state ->
+            val updatedRooms = state.rooms.map { room ->
+                if (room.id == roomId) room.copy(memberIds = room.memberIds + currentUserId)
+                else room
+            }
+            state.copy(rooms = updatedRooms)
+        }
     }
 
     fun leaveRoom(roomId: String) {
-        repository.leaveRoom(roomId, userId)
+        repository.leaveRoom(roomId, currentUserId)
     }
 
     // ── Chat ─────────────────────────────────────────────────────────────────
 
     fun enterRoom(room: Room) {
-        _chatState.update { it.copy(room = room, isLoading = true, messages = emptyList()) }
+        // First set isMember from local data so there's no flicker
+        val localMember = room.memberIds.contains(currentUserId)
+        _chatState.update { it.copy(room = room, isLoading = true, messages = emptyList(), isMember = localMember) }
+
+        // Then verify from Firestore as source of truth
+        repository.isUserMember(room.id, currentUserId) { isMember ->
+            _chatState.update { it.copy(isMember = isMember) }
+        }
+
         messagesListener?.remove()
         messagesListener = repository.listenToMessages(room.id) { messages ->
             _chatState.update { it.copy(messages = messages, isLoading = false) }
@@ -176,20 +206,29 @@ class ChatViewModel(
         val roomId = _chatState.value.room.id
         if (text.isBlank() || roomId.isBlank()) return
 
+        android.util.Log.d("ChatViewModel", "sendMessage: currentUserId=$currentUserId currentUserName=$currentUserName displayName=${FirebaseAuth.getInstance().currentUser?.displayName} email=${FirebaseAuth.getInstance().currentUser?.email}")
+
         _chatState.update { it.copy(inputText = "") }
-        repository.sendMessage(roomId, userId, userName, text)
+        repository.sendMessage(roomId, currentUserId, currentUserName, text)
     }
 
     fun checkAndJoin(roomId: String) {
-        repository.isUserMember(roomId, userId) { isMember ->
-            _chatState.update { it.copy(isMember = isMember) }
-        }
+        // Use local memberIds from already-loaded room — no extra Firestore call needed
+        val isMember = _chatState.value.room.memberIds.contains(currentUserId)
+        _chatState.update { it.copy(isMember = isMember) }
     }
 
     fun joinCurrentRoom() {
         val roomId = _chatState.value.room.id
-        repository.joinRoom(roomId, userId)
-        _chatState.update { it.copy(isMember = true) }
+        repository.joinRoom(roomId, currentUserId)
+        // Update both isMember AND memberIds in the local room object so
+        // if user navigates away and comes back, enterRoom sees them as a member
+        _chatState.update { state ->
+            val updatedRoom = state.room.copy(
+                memberIds = state.room.memberIds + currentUserId
+            )
+            state.copy(isMember = true, room = updatedRoom)
+        }
     }
 
     override fun onCleared() {

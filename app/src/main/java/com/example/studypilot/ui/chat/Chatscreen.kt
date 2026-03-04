@@ -189,7 +189,7 @@ fun ChatScreen(
                             items(msgs, key = { it.id }) { message ->
                                 MessageBubble(
                                     message = message,
-                                    isMe = message.senderId == currentUserId
+                                    isMe = message.senderId == com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
                                 )
                             }
                         }

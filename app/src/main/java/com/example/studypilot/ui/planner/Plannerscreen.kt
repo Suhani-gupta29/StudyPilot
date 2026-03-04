@@ -998,21 +998,15 @@ private fun PlannedSessionRow(
 
         // Show "Do It Today" button for past incomplete sessions in Focus mode
         if (mode == StudyMode.FOCUS && !dayDetail.isFutureDate && !dayDetail.isToday && !session.wasCompleted && !session.isAddedToday && onDoItToday != null) {
-            val today = LocalDate.now()
-            val isSignupDay = (today == dayDetail.date.plusDays(1)) // Today is one day after the detail date
-
-            // Only show button if not on signup day viewing past
-            if (!isSignupDay) {
-                TextButton(
-                    onClick = { showDoItTodayDialog = true },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF4CAF50))
-                ) {
-                    Text(
-                        "Do It Today",
-                        fontSize = 12.sp,
-                        fontFamily = Roboto
-                    )
-                }
+            TextButton(
+                onClick = { showDoItTodayDialog = true },
+                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF4CAF50))
+            ) {
+                Text(
+                    "Do It Today",
+                    fontSize = 12.sp,
+                    fontFamily = Roboto
+                )
             }
         }
     }

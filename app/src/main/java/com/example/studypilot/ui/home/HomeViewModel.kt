@@ -771,9 +771,11 @@ class HomeViewModel(
             val validSubjectNames = safeSubjects.map { it.name }.toSet()
 
             // Validate: Saved session subjects must be non-blank and exist in savedSubjects
-            // Validate: Saved session subjects must be non-blank and exist in savedSubjects
             val allSubjectsValid = sanitizedSaved.all { it.subject.isNotBlank() && it.subject in validSubjectNames }
-            val matchingCounts = sanitizedSaved.size == totalSessionsWithCatchup  // Use total with catchup
+            // Accept the full original plan OR a plan already shrunk by old skip code (size minus exemptions).
+            val exemptedTodayCount = userPreferences.exemptedSessions[today]?.size ?: 0
+            val matchingCounts = sanitizedSaved.size == totalSessionsWithCatchup ||
+                    sanitizedSaved.size == (totalSessionsWithCatchup - exemptedTodayCount).coerceAtLeast(0)
 
 // CRITICAL: Reject plans with "General Study" when we have real subjects
             val hasGeneralStudy = sanitizedSaved.any { it.subject.trim().equals("General Study", ignoreCase = true) }
@@ -1809,39 +1811,67 @@ class HomeViewModel(
 
 
     fun skipCatchupSession(sessionIndex: Int) {
+        // Only valid in EXAM mode
+        if (_uiState.value.selectedMode != StudyMode.EXAM) return
+
         viewModelScope.launch {
             val authState = authViewModel.authState.first()
             if (authState !is AuthState.Authenticated) return@launch
 
             val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Calendar.getInstance().time)
 
-            // Update UI immediately
+            // ── Update UI immediately from current displayed list ─────────────────
             val currentSessions = _uiState.value.studySessions?.toMutableList() ?: return@launch
             val updatedSessions = currentSessions
                 .filterIndexed { index, _ -> index != sessionIndex }
                 .mapIndexed { i, s -> s.copy(sessionNumber = i + 1) }
             _uiState.value = _uiState.value.copy(studySessions = updatedSessions)
 
-            // Persist exemption to preferences
+            // ── Persist: translate UI index → original dailyPlan index ───────────
+            // dailyPlan is ALWAYS kept full (never shrunk). exemptedSessions is the
+            // single source of truth for what is hidden. Because the UI list is already
+            // filtered by previous exemptions, sessionIndex is a position in that shorter
+            // list. We walk the full dailyPlan, skipping already-exempted slots, to find
+            // which original index the user just tapped.
             withContext(Dispatchers.IO) {
                 val currentPrefs = userPreferencesRepository.getUserPreferences(authState.uid).first() ?: return@withContext
                 val currentExemptions = currentPrefs.exemptedSessions.toMutableMap()
-                val exemptionsForDate = currentExemptions[today]?.toMutableList() ?: mutableListOf()
-                if (sessionIndex !in exemptionsForDate) {
-                    exemptionsForDate.add(sessionIndex)
-                    currentExemptions[today] = exemptionsForDate.sorted()
+                val existingExemptions = (currentExemptions[today] ?: emptyList()).toMutableList()
+
+                val originalPlan = currentPrefs.dailyPlan
+                var originalIndex = 0
+                var uiCount = 0
+                // Walk until we've counted past sessionIndex non-exempted slots
+                while (originalIndex < originalPlan.size) {
+                    if (originalIndex !in existingExemptions) {
+                        if (uiCount == sessionIndex) break   // found the matching original slot
+                        uiCount++
+                    }
+                    originalIndex++
                 }
 
-                // Also remove from saved daily plan
-                val updatedPlan = updatedSessions
+                if (originalIndex >= originalPlan.size) {
+                    android.util.Log.e("HomeViewModel", "skipCatchupSession: UI index $sessionIndex could not be mapped (originalPlan.size=${originalPlan.size}, existingExemptions=$existingExemptions)")
+                    return@withContext
+                }
+
+                android.util.Log.d("HomeViewModel", "skipCatchupSession: UI index $sessionIndex → original index $originalIndex")
+
+                // Record the exemption
+                if (originalIndex !in existingExemptions) {
+                    existingExemptions.add(originalIndex)
+                    currentExemptions[today] = existingExemptions.sorted()
+                }
+
+                // IMPORTANT: save dailyPlan unchanged (full original). Only exemptedSessions grows.
+                // This keeps matchingCounts valid on every reload so the plan is never regenerated.
                 val updatedPrefs = currentPrefs.copy(
                     exemptedSessions = currentExemptions,
-                    dailyPlan = updatedPlan,
-                    dailyPlanDate = today,
+                    // dailyPlan intentionally NOT modified — stays full so index walk works next time
                     lastAccessed = System.currentTimeMillis()
                 )
                 userPreferencesRepository.saveUserPreferences(updatedPrefs)
-                android.util.Log.d("HomeViewModel", "Skipped catchup session $sessionIndex on $today")
+                android.util.Log.d("HomeViewModel", "Skipped catchup: originalIndex=$originalIndex exemptions=$existingExemptions dailyPlan stays at ${originalPlan.size} sessions")
             }
         }
     }

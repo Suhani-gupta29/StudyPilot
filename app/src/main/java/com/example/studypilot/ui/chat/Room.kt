@@ -7,6 +7,7 @@ data class Room(
     val subject: String = "",
     val createdBy: String = "",
     val createdByName: String = "",
+    val memberIds: List<String> = emptyList(),
     val memberCount: Int = 0,
     val createdAt: Long = 0L,
     val lastMessage: String = "",
